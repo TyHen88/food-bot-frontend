@@ -51,16 +51,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
 
   const load = useCallback(async () => {
-    // Initialize Telegram WebApp
-    const tg = getTelegramWebApp();
+    // Wait for Telegram WebApp initialization if it's not ready immediately
+    let tg = getTelegramWebApp();
+    let initData = getInitData();
+    
+    // If inside Telegram (usually in an iframe/webview) but initData is not loaded yet, wait up to 200ms
+    if (typeof window !== "undefined" && window.parent !== window && !initData) {
+      for (let i = 0; i < 4; i++) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+        tg = getTelegramWebApp();
+        initData = getInitData();
+        if (initData) break;
+      }
+    }
+
     if (tg) {
       tg.ready();
       tg.expand();
     }
 
-    const initData = getInitData();
     setInitData(initData);
-
     const tgUser = getTelegramUser();
 
     try {
