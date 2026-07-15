@@ -1,8 +1,12 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isToday, getDay } from "date-fns";
-import { ChevronLeft, ChevronRight, ShoppingBag, BarChart3, CalendarDays } from "lucide-react";
+import {
+  ChevronLeft, ChevronRight, ShoppingBag, BarChart3, CalendarDays,
+  BookTemplate, CalendarClock, Settings, History,
+} from "lucide-react";
 import { api } from "@/lib/api";
 import { chatIdQuery } from "@/lib/telegram";
 import { useToast } from "@/components/ui/Toast";
@@ -93,6 +97,56 @@ export default function DashboardPage() {
             </>
           )}
         </div>
+
+        {/* Admin Quick Actions */}
+        {!authLoading && isAdmin && (
+          <div className="mb-6">
+            <h2 className="text-xs font-bold uppercase tracking-wider mb-3" style={{ color: "var(--text-muted)", margin: 0 }}>
+              Admin Quick Actions
+            </h2>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-2">
+              <Link href="/templates" className="flex items-center gap-3 p-3 rounded-[var(--radius-lg)] border bg-[var(--surface)] hover:bg-[var(--surface-2)] transition-all cursor-pointer" style={{ borderColor: "var(--border)", textDecoration: "none" }}>
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-[var(--color-primary-light)] text-[var(--color-primary)] flex-shrink-0">
+                  <BookTemplate size={16} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold leading-tight m-0" style={{ color: "var(--text)" }}>Templates</p>
+                  <p className="text-[10px] m-0 truncate" style={{ color: "var(--text-muted)" }}>Manage food menus</p>
+                </div>
+              </Link>
+
+              <Link href="/schedule" className="flex items-center gap-3 p-3 rounded-[var(--radius-lg)] border bg-[var(--surface)] hover:bg-[var(--surface-2)] transition-all cursor-pointer" style={{ borderColor: "var(--border)", textDecoration: "none" }}>
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-blue-50 dark:bg-blue-950/30 text-blue-500 flex-shrink-0">
+                  <CalendarClock size={16} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold leading-tight m-0" style={{ color: "var(--text)" }}>Schedule</p>
+                  <p className="text-[10px] m-0 truncate" style={{ color: "var(--text-muted)" }}>Timing & reminders</p>
+                </div>
+              </Link>
+
+              <Link href="/settings" className="flex items-center gap-3 p-3 rounded-[var(--radius-lg)] border bg-[var(--surface)] hover:bg-[var(--surface-2)] transition-all cursor-pointer" style={{ borderColor: "var(--border)", textDecoration: "none" }}>
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-orange-50 dark:bg-orange-950/30 text-orange-500 flex-shrink-0">
+                  <Settings size={16} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold leading-tight m-0" style={{ color: "var(--text)" }}>Settings</p>
+                  <p className="text-[10px] m-0 truncate" style={{ color: "var(--text-muted)" }}>Configure global keys</p>
+                </div>
+              </Link>
+
+              <Link href="/history" className="flex items-center gap-3 p-3 rounded-[var(--radius-lg)] border bg-[var(--surface)] hover:bg-[var(--surface-2)] transition-all cursor-pointer" style={{ borderColor: "var(--border)", textDecoration: "none" }}>
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-purple-50 dark:bg-purple-950/30 text-purple-500 flex-shrink-0">
+                  <History size={16} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold leading-tight m-0" style={{ color: "var(--text)" }}>History</p>
+                  <p className="text-[10px] m-0 truncate" style={{ color: "var(--text-muted)" }}>Audit logs & events</p>
+                </div>
+              </Link>
+            </div>
+          </div>
+        )}
 
         {/* Calendar card */}
         <Card variant="default" padding="none" className="overflow-hidden">
