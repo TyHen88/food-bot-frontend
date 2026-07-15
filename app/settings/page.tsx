@@ -425,7 +425,7 @@ function PayersSection() {
             value={editForm.qr_filename}
             onChange={e => setEditForm(f => ({ ...f, qr_filename: e.target.value }))}
           />
-          <div className="text-xs text-[var(--text-muted)] -mt-3">A file in the bot's assets/ folder.</div>
+          <div className="text-xs text-[var(--text-muted)] -mt-3">A file in the bot&apos;s assets/ folder.</div>
           <div className="space-y-1">
             <label className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
               KHQR text

@@ -1,36 +1,42 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🍽️ Food Bot — Frontend App
 
-## Getting Started
+This is a modern React/TypeScript Next.js application designed to serve as the Admin Panel and Telegram Mini App interface for the Telegram Food Poll Bot.
 
-First, run the development server:
+## 🚀 Preparing for Deployment on Vercel
+
+Vercel provides native, zero-configuration hosting for Next.js. Follow these simple steps to deploy:
+
+### 1. Import Repository
+- Connect your GitHub account to Vercel.
+- Select and import the `food-bot-frontend` repository.
+
+### 2. Configure Environment Variables
+In the **Environment Variables** section of the Vercel project setup, add the following variables:
+
+| Variable | Description | Value (Production) | Value (Local Dev) |
+| --- | --- | --- | --- |
+| `NEXT_PUBLIC_API_URL` | The HTTPS URL of your FastAPI backend server | `https://your-backend.railway.app` (or Render/VPS URL) | `http://localhost:8000` |
+| `NEXT_PUBLIC_DEV_MODE` | Set to bypass Telegram WebView authentication requirements during testing | `false` | `true` |
+
+> [!IMPORTANT]
+> - For production, ensure `NEXT_PUBLIC_DEV_MODE` is set to `false` (or left blank) so that the app correctly validates requests using the official Telegram WebApp authentication signatures.
+> - Ensure your FastAPI backend has the corresponding CORS configuration updated to allow requests from your Vercel deployment domain (e.g. `https://food-bot-frontend.vercel.app`).
+
+### 3. Deploy
+- Click **Deploy**. Vercel will automatically download dependencies, compile the TypeScript code, run lint audits, optimize images, and host your app on global edge locations!
+
+---
+
+## 🛠️ Local Development
+
+To run the Next.js development server locally:
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Modify `app/page.tsx` to edit the main dashboard layout.
+- The theme configurations and design variables are customizable inside `app/globals.css`.
