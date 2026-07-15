@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Plus, Clock, Calendar } from "lucide-react";
 import { api } from "@/lib/api";
+import { chatIdQuery, launchChatId } from "@/lib/telegram";
 import { useToast } from "@/components/ui/Toast";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -58,7 +59,9 @@ function ScheduleContent() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await api.get<Schedule[]>("/schedules");
+      // Scope to the group the Mini App was opened from; outside a group
+      // (bot DM / dev browser) the backend returns every schedule.
+      const data = await api.get<Schedule[]>(`/schedules${chatIdQuery(true)}`);
       setSchedules(data ?? []);
     } catch (e: unknown) {
       toast((e as Error).message, "error");
@@ -72,7 +75,9 @@ function ScheduleContent() {
   async function toggleSchedule(s: Schedule) {
     setToggling(s.schedule_id);
     try {
-      await api.patch(`/schedules/${s.schedule_id}`, { is_active: !s.is_active });
+      // PUT, not PATCH — older deployed backends only route PUT here and
+      // answer PATCH with 405 Method Not Allowed.
+      await api.put(`/schedules/${s.schedule_id}`, { is_active: !s.is_active });
       setSchedules(prev => prev.map(x => x.schedule_id === s.schedule_id ? { ...x, is_active: !x.is_active } : x));
       toast(`Schedule ${s.is_active ? "disabled" : "enabled"}`, "success");
     } catch (e: unknown) {

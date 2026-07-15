@@ -17,7 +17,12 @@ export interface TelegramWebApp {
   expand: () => void;
   close: () => void;
   initData: string;
-  initDataUnsafe: { user?: TelegramUser; [key: string]: unknown };
+  initDataUnsafe: {
+    user?: TelegramUser;
+    chat?: { id: number; type?: string; title?: string };
+    start_param?: string;
+    [key: string]: unknown;
+  };
   colorScheme: "light" | "dark";
   themeParams: Record<string, string>;
   BackButton: {
@@ -60,6 +65,40 @@ export function getInitData(): string {
 
 export function getTelegramUser(): TelegramUser | null {
   return getTelegramWebApp()?.initDataUnsafe?.user ?? null;
+}
+
+function getStartParam(): string {
+  const fromSdk = getTelegramWebApp()?.initDataUnsafe?.start_param;
+  if (fromSdk) return fromSdk;
+  // Fallback: Telegram passes it in the URL as tgWebAppStartParam.
+  if (typeof window !== "undefined") {
+    const m = /[?&#]tgWebAppStartParam=([A-Za-z0-9_-]+)/.exec(window.location.href);
+    if (m) return m[1];
+  }
+  return "";
+}
+
+/**
+ * The group chat id this Mini App launch is scoped to, or "" when opened
+ * outside a group (bot DM, dev browser). Reverses encode_chat_param() in
+ * backend/bot/handlers.py: "g<digits>" → negative id, "c<digits>" → positive.
+ */
+export function launchChatId(): string {
+  const p = getStartParam();
+  let m = /^g(\d+)$/.exec(p);
+  if (m) return `-${m[1]}`;
+  m = /^c(\d+)$/.exec(p);
+  if (m) return m[1];
+  if (/^-?\d+$/.test(p)) return p; // tolerate a raw chat id
+  const chat = getTelegramWebApp()?.initDataUnsafe?.chat;
+  return chat?.id != null ? String(chat.id) : "";
+}
+
+/** "&chat_id=..." query fragment for API calls, or "" outside a group. */
+export function chatIdQuery(first = false): string {
+  const id = launchChatId();
+  if (!id) return "";
+  return `${first ? "?" : "&"}chat_id=${encodeURIComponent(id)}`;
 }
 
 export function haptic(type: "success" | "error" | "warning") {

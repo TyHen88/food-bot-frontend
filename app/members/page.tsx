@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import { formatDistanceToNow, parseISO } from "date-fns";
 import { api } from "@/lib/api";
+import { chatIdQuery } from "@/lib/telegram";
+import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/components/ui/Toast";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -56,6 +58,7 @@ function getInitials(name?: string): string {
 }
 
 export default function MembersPage() {
+  const { loading: authLoading } = useAuth();
   const { toast } = useToast();
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,7 +67,7 @@ export default function MembersPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await api.get<Member[]>("/members");
+      const data = await api.get<Member[]>(`/members${chatIdQuery(true)}`);
       setMembers(data ?? []);
     } catch (e: unknown) {
       toast((e as Error).message, "error");
@@ -73,7 +76,11 @@ export default function MembersPage() {
     }
   }, [toast]);
 
-  useEffect(() => { load(); }, [load]);
+  // Wait for AuthContext (it sets the initData auth header) before fetching.
+  useEffect(() => {
+    if (authLoading) return;
+    load();
+  }, [load, authLoading]);
 
   // 1. Stats Calculations
   const stats = useMemo(() => {

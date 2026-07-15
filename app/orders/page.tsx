@@ -17,6 +17,7 @@ import {
   MoreHorizontal
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { chatIdQuery } from "@/lib/telegram";
 import { useToast } from "@/components/ui/Toast";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -52,7 +53,7 @@ function getInitials(name?: string): string {
 }
 
 export default function OrdersPage() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, loading: authLoading } = useAuth();
   const { toast } = useToast();
   const [date, setDate] = useState(() => format(new Date(), "yyyy-MM-dd"));
   const [orders, setOrders] = useState<Order[]>([]);
@@ -63,7 +64,7 @@ export default function OrdersPage() {
   const load = useCallback(async (d: string) => {
     setLoading(true);
     try {
-      const data = await api.get<Order[]>(`/orders?date=${d}`);
+      const data = await api.get<Order[]>(`/orders?date=${d}${chatIdQuery()}`);
       setOrders(Array.isArray(data) ? data : []);
     } catch (e: unknown) {
       toast((e as Error).message, "error");
@@ -73,7 +74,11 @@ export default function OrdersPage() {
     }
   }, [toast]);
 
-  useEffect(() => { load(date); }, [date, load]);
+  // Wait for AuthContext (it sets the initData auth header) before fetching.
+  useEffect(() => {
+    if (authLoading) return;
+    load(date);
+  }, [date, load, authLoading]);
 
   function prevDay() { 
     const d = new Date(date + "T00:00:00"); 

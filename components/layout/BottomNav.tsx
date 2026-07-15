@@ -3,18 +3,19 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  LayoutDashboard, ShoppingBag, Users, Settings, CalendarClock,
+  LayoutDashboard, ShoppingBag, Users, Settings, CalendarClock, BookTemplate,
 } from "lucide-react";
 import { clsx } from "clsx";
 import { useAuth } from "@/contexts/AuthContext";
 import { hapticImpact } from "@/lib/telegram";
 
 const NAV = [
-  { href: "/",         icon: LayoutDashboard, label: "Dashboard" },
-  { href: "/orders",   icon: ShoppingBag,     label: "Orders" },
-  { href: "/schedule", icon: CalendarClock,   label: "Schedule", adminOnly: true },
-  { href: "/members",  icon: Users,           label: "Members" },
-  { href: "/settings", icon: Settings,        label: "Settings", adminOnly: true },
+  { href: "/",          icon: LayoutDashboard, label: "Dashboard" },
+  { href: "/orders",    icon: ShoppingBag,     label: "Orders" },
+  { href: "/templates", icon: BookTemplate,    label: "Templates", adminOnly: true },
+  { href: "/schedule",  icon: CalendarClock,   label: "Schedule",  adminOnly: true },
+  { href: "/members",   icon: Users,           label: "Members" },
+  { href: "/settings",  icon: Settings,        label: "Settings",  adminOnly: true },
 ];
 
 export function BottomNav() {

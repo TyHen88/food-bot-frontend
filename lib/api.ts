@@ -5,12 +5,24 @@
  * backend DEV_BYPASS_AUTH flag accepts that and injects a dev admin identity.
  */
 
+import { getInitData as readTelegramInitData } from "./telegram";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 // Singleton initData set by AuthContext after Telegram SDK is ready.
 let _initData = "";
 export function setInitData(data: string) { _initData = data; }
 export function getInitData() { return _initData; }
+
+/** initData for the auth header — falls back to reading the Telegram SDK
+ * directly so requests fired before AuthContext finishes don't go out with
+ * an empty header (which the backend rejects with 401). */
+function currentInitData(): string {
+  if (_initData) return _initData;
+  const fresh = readTelegramInitData();
+  if (fresh) _initData = fresh;
+  return _initData;
+}
 
 export class ApiError extends Error {
   status: number;
@@ -28,7 +40,7 @@ export async function apiRequest<T = unknown>(
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
-    "X-Telegram-Init-Data": _initData,
+    "X-Telegram-Init-Data": currentInitData(),
   };
 
   const resp = await fetch(`${API_BASE}/api${path}`, { ...options, headers });

@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isToday, getDay } from "date-fns";
 import { ChevronLeft, ChevronRight, ShoppingBag, BarChart3, CalendarDays, X } from "lucide-react";
 import { api } from "@/lib/api";
+import { chatIdQuery } from "@/lib/telegram";
 import { useToast } from "@/components/ui/Toast";
 import { Card, StatCard } from "@/components/ui/Card";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -18,7 +19,7 @@ import { Trash2, Plus, Edit2, Check } from "lucide-react";
 interface DaySummary { count: number; orderIds: string[]; orders: Order[]; }
 
 export default function DashboardPage() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, loading: authLoading } = useAuth();
   const { toast } = useToast();
   const [month, setMonth] = useState(() => new Date());
   const [orders, setOrders] = useState<Order[]>([]);
@@ -31,7 +32,7 @@ export default function DashboardPage() {
     try {
       const from = format(startOfMonth(m), "yyyy-MM-dd");
       const to   = format(endOfMonth(m),   "yyyy-MM-dd");
-      const data = await api.get<Order[]>(`/orders?from=${from}&to=${to}`);
+      const data = await api.get<Order[]>(`/orders?from=${from}&to=${to}${chatIdQuery()}`);
       setOrders(Array.isArray(data) ? data : []);
     } catch (e: unknown) {
       toast((e as Error).message, "error");
@@ -41,7 +42,12 @@ export default function DashboardPage() {
     }
   }, [toast]);
 
-  useEffect(() => { loadMonth(month); }, [month, loadMonth]);
+  // Wait for AuthContext to finish (it sets the initData auth header) —
+  // fetching earlier hits the API without credentials and 401s.
+  useEffect(() => {
+    if (authLoading) return;
+    loadMonth(month);
+  }, [month, loadMonth, authLoading]);
 
   // Build per-day summaries from the fetched orders
   const dayMap: Record<string, DaySummary> = {};
