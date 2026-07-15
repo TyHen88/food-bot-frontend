@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, Battambang } from "next/font/google";
 import Script from "next/script";
 
@@ -21,6 +21,15 @@ import { BottomNav } from "@/components/layout/BottomNav";
 export const metadata: Metadata = {
   title: { default: "Food Bot Admin", template: "%s | Food Bot" },
   description: "Telegram Food Poll Bot — Admin Panel",
+};
+
+// Pin the scale so the Telegram WebView behaves like a native app: no pinch
+// zoom, and no iOS auto-zoom when focusing an input box.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

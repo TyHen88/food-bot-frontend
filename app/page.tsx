@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isToday, getDay } from "date-fns";
-import { ChevronLeft, ChevronRight, ShoppingBag, BarChart3, CalendarDays, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, ShoppingBag, BarChart3, CalendarDays } from "lucide-react";
 import { api } from "@/lib/api";
 import { chatIdQuery } from "@/lib/telegram";
 import { useToast } from "@/components/ui/Toast";
@@ -12,9 +12,8 @@ import { Badge } from "@/components/ui/Badge";
 import { TopBar } from "@/components/layout/TopBar";
 import { DesktopHeader } from "@/components/layout/TopBar";
 import { useAuth } from "@/contexts/AuthContext";
-import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
 import { OrderItemsEditor, type Order } from "@/components/orders/OrderItemsEditor";
-import { Trash2, Plus, Edit2, Check } from "lucide-react";
 
 interface DaySummary { count: number; orderIds: string[]; orders: Order[]; }
 
@@ -163,50 +162,35 @@ export default function DashboardPage() {
           </div>
         </Card>
 
-        {/* Day detail panel */}
-        {selectedDay && (
-          <div className="mt-5 animate-slide-up">
-            <Card variant="default" padding="none" className="overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-3"
-                style={{ borderBottom: "1px solid var(--border)" }}>
-                <h3 className="text-sm font-semibold" style={{ color: "var(--text)", margin: 0 }}>
-                  {format(selectedDay, "EEEE, d MMMM")}
-                </h3>
-                <div className="flex items-center gap-2">
-                  {selectedData && (
-                    <Badge variant="accent">{selectedData.count} items</Badge>
-                  )}
-                  <button onClick={() => setSelectedDay(null)}
-                    className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-[var(--surface-2)] border-0 cursor-pointer"
-                    style={{ background: "transparent", color: "var(--text-muted)" }}>
-                    <X size={14} />
-                  </button>
-                </div>
+        {/* Day detail — bottom sheet on mobile, dialog on desktop */}
+        <Modal
+          open={!!selectedDay}
+          onClose={() => setSelectedDay(null)}
+          title={selectedDay ? format(selectedDay, "EEEE, d MMMM") : ""}
+          maxWidth="560px"
+        >
+          {!selectedData ? (
+            <p className="text-sm text-center py-8" style={{ color: "var(--text-muted)" }}>
+              No orders on this day
+            </p>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <Badge variant="accent">{selectedData.count} items</Badge>
+                <Badge variant="default">{selectedData.orders.length} order{selectedData.orders.length > 1 ? "s" : ""}</Badge>
               </div>
-
-              <div className="px-5 py-4">
-                {!selectedData ? (
-                  <p className="text-sm text-center py-4" style={{ color: "var(--text-muted)" }}>
-                    No orders on this day
-                  </p>
-                ) : (
-                  <div className="space-y-4">
-                    {selectedData.orders.map(o => (
-                      <div key={o.order_id}>
-                        {/* Items Component */}
-                        <OrderItemsEditor 
-                          order={o} 
-                          isAdmin={isAdmin} 
-                          onSaved={() => loadMonth(month)} 
-                        />
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </Card>
-          </div>
-        )}
+              {selectedData.orders.map(o => (
+                <Card key={o.order_id} variant="flat" padding="sm">
+                  <OrderItemsEditor
+                    order={o}
+                    isAdmin={isAdmin}
+                    onSaved={() => loadMonth(month)}
+                  />
+                </Card>
+              ))}
+            </div>
+          )}
+        </Modal>
       </main>
     </>
   );

@@ -233,3 +233,15 @@ body {
 .animate-slide-up { animation: slideUp 0.30s ease both; }
 .animate-spin     { animation: spin 0.7s linear infinite; }
 .animate-pulse    { animation: pulse 1.5s ease-in-out infinite; }
+
+/* ── Mobile input zoom guard ────────────────────────────────────────────
+   iOS WebViews auto-zoom into any focused field whose font-size is below
+   16px, even with maximum-scale=1 on some versions. Force 16px on touch
+   viewports so focusing an input never zooms the page. */
+@media (max-width: 767px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}

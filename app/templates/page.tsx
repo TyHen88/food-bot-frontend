@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Plus, Trash2, BookTemplate } from "lucide-react";
 import { api } from "@/lib/api";
+import { chatIdQuery, launchChatId } from "@/lib/telegram";
 import { useToast } from "@/components/ui/Toast";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -26,6 +27,140 @@ interface Template {
 
 function parseOptions(raw: string): string[] {
   try { return JSON.parse(raw); } catch { return raw.split("\n").filter(Boolean); }
+}
+
+// ── Order-summary message style ─────────────────────────────────────────
+// The bot renders the Order-button summary in one of these styles
+// (format_order_summary in backend/bot/utils.py). Stored per group when the
+// app is opened from one, otherwise as the global default.
+
+interface StyleInfo {
+  style: string;
+  scoped: boolean;
+  has_override: boolean;
+  global_style: string;
+}
+
+const STYLES: { id: string; name: string; hint: string; preview: string }[] = [
+  {
+    id: "1", name: "Classic", hint: "Receipt with order + detail sections",
+    preview: `🛒 Name: Seyha
+━━━━━━━━━━━━
+🍱 Order
+   1) អាម៉ុក × 2
+━━━━━━━━━━━━
+👥 Detail
+   • អាម៉ុក × 2 (Tii, Vun)
+━━━━━━━━━━━━
+Total: 2 dishes`,
+  },
+  {
+    id: "2", name: "Compact", hint: "Short, chat-friendly list",
+    preview: `🛒 Seyha's order
+
+• អាម៉ុក × 2 — Tii, Vun
+
+📦 2 dishes · 2 people`,
+  },
+  {
+    id: "3", name: "Card", hint: "Boxed header + item cards",
+    preview: `╭──────────────────────╮
+│ 🍴 Food Order — Seyha │
+╰──────────────────────╯
+
+🥢 អាម៉ុក
+    × 2 · Tii, Vun`,
+  },
+  {
+    id: "4", name: "By member", hint: "Grouped per person — easy to collect money",
+    preview: `🛒 Name: Seyha
+━━━━━━━━━━━━
+👥 Order by member
+   👤 Tii
+      • អាម៉ុក
+   👤 Vun
+      • អាម៉ុក
+━━━━━━━━━━━━
+Total: 2 dishes · 2 people`,
+  },
+];
+
+function StyleSection() {
+  const { toast } = useToast();
+  const [info, setInfo] = useState<StyleInfo | null>(null);
+  const [saving, setSaving] = useState<string | null>(null);
+  const chatId = launchChatId();
+
+  const load = useCallback(async () => {
+    try {
+      const data = await api.get<StyleInfo>(`/templates/style${chatIdQuery(true)}`);
+      setInfo(data);
+    } catch (e: unknown) {
+      toast((e as Error).message, "error");
+    }
+  }, [toast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function pick(id: string) {
+    if (!info || info.style === id) return;
+    setSaving(id);
+    try {
+      await api.put(`/templates/style${chatIdQuery(true)}`, { value: id });
+      setInfo(prev => prev ? { ...prev, style: id, has_override: !!chatId || prev.has_override } : prev);
+      toast(chatId ? "Style saved for this group" : "Default style saved", "success");
+    } catch (e: unknown) {
+      toast((e as Error).message, "error");
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  return (
+    <section className="mb-8">
+      <p className="section-label">Order message style</p>
+      <p className="text-xs mb-3" style={{ color: "var(--text-muted)" }}>
+        How the bot formats the order summary when someone taps the Order button
+        {chatId ? " — saved for this group." : " — the default for every group."}
+      </p>
+      {!info ? (
+        <div className="grid sm:grid-cols-2 gap-4">
+          {[1,2].map(i => <SkeletonCard key={i} />)}
+        </div>
+      ) : (
+        <div className="grid sm:grid-cols-2 gap-4">
+          {STYLES.map(s => {
+            const active = info.style === s.id;
+            return (
+              <button
+                key={s.id}
+                onClick={() => pick(s.id)}
+                disabled={saving !== null}
+                className="text-left rounded-[var(--radius-lg)] border p-4 cursor-pointer transition-all"
+                style={{
+                  background: "var(--surface)",
+                  borderColor: active ? "var(--color-primary)" : "var(--border)",
+                  boxShadow: active ? "0 0 0 1px var(--color-primary)" : "var(--shadow-sm)",
+                  opacity: saving && saving !== s.id ? 0.6 : 1,
+                }}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-sm font-bold" style={{ color: "var(--text)" }}>{s.name}</span>
+                  {active && <Badge variant="primary" className="text-[10px]">Selected</Badge>}
+                  {saving === s.id && <Badge variant="default" className="text-[10px]">Saving…</Badge>}
+                </div>
+                <p className="text-xs mb-2" style={{ color: "var(--text-muted)" }}>{s.hint}</p>
+                <pre
+                  className="text-[10px] leading-relaxed rounded-[var(--radius-md)] p-2 overflow-x-auto m-0"
+                  style={{ background: "var(--surface-2)", color: "var(--text-2)", fontFamily: "inherit" }}
+                >{s.preview}</pre>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
 }
 
 export default function TemplatesPage() {
@@ -108,12 +243,20 @@ function TemplatesContent() {
           title="Poll Templates"
           subtitle="Reusable food poll templates"
           actions={
-            <Button size="sm" onClick={() => setShowModal(true)}>
-              <Plus size={14} /> New Template
-            </Button>
+            // Desktop-only: on mobile the TopBar already shows a "New" action,
+            // and .page-header is visible on every viewport — without this
+            // guard the page renders two New buttons on phones.
+            <span className="hidden md:block">
+              <Button size="sm" onClick={() => setShowModal(true)}>
+                <Plus size={14} /> New Template
+              </Button>
+            </span>
           }
         />
 
+        <StyleSection />
+
+        <p className="section-label">Poll templates</p>
         {loading ? (
           <div className="grid sm:grid-cols-2 gap-4">
             {[1,2,3,4].map(i => <SkeletonCard key={i} />)}
