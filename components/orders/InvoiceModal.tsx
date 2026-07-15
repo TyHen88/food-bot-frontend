@@ -27,11 +27,13 @@ export function InvoiceModal({ open, onClose, order, onInvoiceSent }: InvoiceMod
   const [bulkPrice, setBulkPrice] = useState("");
   const [sending, setSending] = useState(false);
 
-  // Group items by name and sum quantities
+  // Group items by name and sum quantities. Names are cleaned of leading
+  // list markers ("- dish" → "dish") so prefix variants price as one item;
+  // the backend applies the same cleaning when matching prices.
   const uniqueItems = useMemo<UniqueItem[]>(() => {
     const map: Record<string, number> = {};
     (order.items ?? []).forEach(it => {
-      const name = it.item_name || "Unknown";
+      const name = (it.item_name || "Unknown").replace(/^[\s\-•*·]+/, "").trim() || "Unknown";
       map[name] = (map[name] || 0) + (it.qty ?? 1);
     });
     return Object.entries(map).map(([item_name, qty]) => ({ item_name, qty }));
@@ -83,6 +85,11 @@ export function InvoiceModal({ open, onClose, order, onInvoiceSent }: InvoiceMod
   };
 
   const handleSendInvoice = async () => {
+    // An all-$0.00 invoice is always a missed input, never intended.
+    if (totalCost <= 0) {
+      toast("Enter the item prices before sending the invoice", "error");
+      return;
+    }
     setSending(true);
     try {
       const payload = {

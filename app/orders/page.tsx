@@ -26,6 +26,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { useAuth } from "@/contexts/AuthContext";
 import { OrderItemsEditor, type Order } from "@/components/orders/OrderItemsEditor";
 import { InvoiceModal } from "@/components/orders/InvoiceModal";
+import { InvoiceViewModal } from "@/components/orders/InvoiceViewModal";
 
 interface GroupedPoll { poll_id: string; chat_title?: string; orders: Order[]; }
 
@@ -60,6 +61,7 @@ export default function OrdersPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeInvoiceOrder, setActiveInvoiceOrder] = useState<Order | null>(null);
+  const [viewInvoiceId, setViewInvoiceId] = useState<string | null>(null);
 
   const load = useCallback(async (d: string) => {
     setLoading(true);
@@ -331,11 +333,15 @@ export default function OrdersPage() {
                 <div className="px-4 py-2 divide-y divide-[var(--border)]">
                   {g.orders.map(o => (
                     <div key={o.order_id} className="py-2">
-                      <OrderItemsEditor 
-                        order={o} 
-                        isAdmin={isAdmin} 
+                      <OrderItemsEditor
+                        order={o}
+                        isAdmin={isAdmin}
                         onSaved={() => load(date)}
-                        onInvoiceClick={() => setActiveInvoiceOrder(o)}
+                        onInvoiceClick={() =>
+                          o.has_invoice
+                            ? setViewInvoiceId(o.order_id)
+                            : setActiveInvoiceOrder(o)
+                        }
                       />
                     </div>
                   ))}
@@ -355,6 +361,14 @@ export default function OrdersPage() {
           onInvoiceSent={() => load(date)}
         />
       )}
+
+      {/* Sent-invoice viewer (all roles; Resend for admins) */}
+      <InvoiceViewModal
+        invoiceId={viewInvoiceId}
+        open={!!viewInvoiceId}
+        onClose={() => setViewInvoiceId(null)}
+        isAdmin={isAdmin}
+      />
     </>
   );
 }

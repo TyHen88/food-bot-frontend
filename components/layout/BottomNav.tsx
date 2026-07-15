@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  LayoutDashboard, ShoppingBag, Users, Settings, CalendarClock, BookTemplate,
+  LayoutDashboard, ShoppingBag, Users, Settings, CalendarClock, BookTemplate, Receipt,
 } from "lucide-react";
 import { clsx } from "clsx";
 import { useAuth } from "@/contexts/AuthContext";
@@ -12,6 +12,7 @@ import { hapticImpact } from "@/lib/telegram";
 const NAV = [
   { href: "/",          icon: LayoutDashboard, label: "Dashboard" },
   { href: "/orders",    icon: ShoppingBag,     label: "Orders" },
+  { href: "/invoices",  icon: Receipt,         label: "Invoices" },
   { href: "/templates", icon: BookTemplate,    label: "Templates", adminOnly: true },
   { href: "/schedule",  icon: CalendarClock,   label: "Schedule",  adminOnly: true },
   { href: "/members",   icon: Users,           label: "Members" },

@@ -3,7 +3,7 @@ import { api } from "@/lib/api";
 import { useToast } from "@/components/ui/Toast";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { Trash2, Plus, Edit2, FileText } from "lucide-react";
+import { Trash2, Plus, Edit2, FileText, Eye } from "lucide-react";
 
 export interface OrderItem {
   name?: string;
@@ -25,6 +25,7 @@ export interface Order {
   item_count?: number;
   person_count?: number;
   paid_by?: { user_id?: string; username?: string };
+  has_invoice?: boolean;
 }
 
 export function OrderItemsEditor({ 
@@ -157,6 +158,18 @@ export function OrderItemsEditor({
           ))
         )}
       </div>
+      {/* Members can still open a sent invoice (read-only). */}
+      {!isAdmin && order.has_invoice && onInvoiceClick && (
+        <div className="flex justify-end mt-3 pt-2" style={{ borderTop: "1px solid var(--border)" }}>
+          <button
+            onClick={onInvoiceClick}
+            className="flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-[var(--radius-sm)] border border-[var(--border)] cursor-pointer transition-colors"
+            style={{ background: "var(--color-success-light)", color: "var(--color-success)" }}
+          >
+            <Eye size={12} /> View Invoice
+          </button>
+        </div>
+      )}
       {isAdmin && (
         <div className="flex items-center justify-between mt-4 pt-3" style={{ borderTop: "1px solid var(--border)" }}>
           <button
@@ -183,13 +196,21 @@ export function OrderItemsEditor({
               <button
                 onClick={onInvoiceClick}
                 className="flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-[var(--radius-sm)] border border-[var(--border)] cursor-pointer transition-colors"
-                style={{ 
-                  background: "var(--color-primary-light)", 
-                  color: "var(--color-primary)",
-                  borderColor: "var(--border)" 
-                }}
+                style={order.has_invoice
+                  ? {
+                      background: "var(--color-success-light)",
+                      color: "var(--color-success)",
+                      borderColor: "var(--border)",
+                    }
+                  : {
+                      background: "var(--color-primary-light)",
+                      color: "var(--color-primary)",
+                      borderColor: "var(--border)",
+                    }}
               >
-                <FileText size={12} /> Invoice
+                {order.has_invoice
+                  ? (<><Eye size={12} /> View Invoice</>)
+                  : (<><FileText size={12} /> Invoice</>)}
               </button>
             )}
           </div>
