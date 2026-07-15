@@ -181,6 +181,21 @@ export default function DashboardPage() {
               </div>
               {selectedData.orders.map(o => (
                 <Card key={o.order_id} variant="flat" padding="sm">
+                  {/* Card header: which group + who paid */}
+                  <div className="flex items-center justify-between gap-2 pb-1.5"
+                    style={{ borderBottom: "1px solid var(--border)" }}>
+                    <span className="text-xs font-semibold truncate" style={{ color: "var(--text)" }}>
+                      {o.chat_title || `Poll #${o.poll_id.slice(-6)}`}
+                    </span>
+                    {(o.paid_by?.username || o.paid_by?.user_id) && (
+                      <span className="text-[10px] shrink-0" style={{ color: "var(--text-muted)" }}>
+                        💳 Paid by{" "}
+                        <span className="font-semibold" style={{ color: "var(--color-primary)" }}>
+                          {o.paid_by.username || o.paid_by.user_id}
+                        </span>
+                      </span>
+                    )}
+                  </div>
                   <OrderItemsEditor
                     order={o}
                     isAdmin={isAdmin}

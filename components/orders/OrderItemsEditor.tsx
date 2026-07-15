@@ -64,13 +64,18 @@ export function OrderItemsEditor({
   }
 
   if (editing) {
+    // Grid with fixed qty/delete columns and min-w-0 inputs: text inputs
+    // shrink instead of pushing the qty box and delete button off-screen
+    // on narrow (Telegram) viewports.
+    const cellCls = "w-full min-w-0 px-1.5 py-1 text-xs rounded border focus:outline-none focus:ring-1";
+    const cellStyle = { background: "var(--surface)", color: "var(--text)", borderColor: "var(--border)" };
     return (
-      <div className="space-y-3">
+      <div className="space-y-2">
         {draftItems.map((item, idx) => (
-          <div key={idx} className="flex items-center gap-2">
+          <div key={idx} className="grid grid-cols-[1fr_1.3fr_2.25rem_1.5rem] gap-1.5 items-center">
             <input
-              className="flex-[1] px-2 py-1.5 text-sm rounded border focus:outline-none focus:ring-1"
-              style={{ background: "var(--surface)", color: "var(--text)", borderColor: "var(--border)" }}
+              className={cellCls}
+              style={cellStyle}
               placeholder="Name"
               value={item.name || ""}
               onChange={e => {
@@ -80,8 +85,8 @@ export function OrderItemsEditor({
               }}
             />
             <input
-              className="flex-[1.5] px-2 py-1.5 text-sm rounded border focus:outline-none focus:ring-1"
-              style={{ background: "var(--surface)", color: "var(--text)", borderColor: "var(--border)" }}
+              className={cellCls}
+              style={cellStyle}
               placeholder="Dish"
               value={item.item_name || ""}
               onChange={e => {
@@ -93,8 +98,9 @@ export function OrderItemsEditor({
             <input
               type="number"
               min="1"
-              className="w-12 px-2 py-1.5 text-sm rounded border text-center focus:outline-none focus:ring-1"
-              style={{ background: "var(--surface)", color: "var(--text)", borderColor: "var(--border)" }}
+              inputMode="numeric"
+              className={`${cellCls} text-center px-0.5`}
+              style={cellStyle}
               value={item.qty || 1}
               onChange={e => {
                 const arr = [...draftItems];
@@ -104,17 +110,18 @@ export function OrderItemsEditor({
             />
             <button
               onClick={() => setDraftItems(draftItems.filter((_, i) => i !== idx))}
-              className="w-7 h-7 flex-shrink-0 flex items-center justify-center rounded border-0 cursor-pointer hover:opacity-80 transition-opacity"
+              className="w-6 h-6 flex items-center justify-center justify-self-end rounded border-0 cursor-pointer hover:opacity-80 transition-opacity"
               style={{ background: "var(--color-danger-light)", color: "var(--color-danger)" }}
+              aria-label="Remove item"
             >
-              <Trash2 size={14} />
+              <Trash2 size={12} />
             </button>
           </div>
         ))}
-        
-        <div className="flex gap-2 pt-1">
+
+        <div className="flex items-center gap-2 pt-1 flex-wrap">
           <Button variant="secondary" size="sm" onClick={() => setDraftItems([...draftItems, { name: "", item_name: "", qty: 1 }])}>
-            <Plus size={14} /> Add Item
+            <Plus size={13} /> Add
           </Button>
           <div className="flex-1" />
           <Button variant="secondary" size="sm" onClick={() => setEditing(false)} disabled={saving}>Cancel</Button>
@@ -126,23 +133,23 @@ export function OrderItemsEditor({
 
   return (
     <div>
-      <div className="space-y-2 mt-2">
+      <div className="space-y-1 mt-2">
         {(order.items ?? []).length === 0 ? (
           <p className="text-xs italic py-2" style={{ color: "var(--text-muted)" }}>No items in this order.</p>
         ) : (
           (order.items ?? []).map((item, idx) => (
-            <div key={idx} className="flex items-center justify-between gap-3 text-sm py-2"
+            <div key={idx} className="flex items-center justify-between gap-2 text-xs py-1.5"
               style={{ borderBottom: "1px solid var(--border)" }}>
-              <div className="flex items-center gap-2 overflow-hidden flex-1">
-                <span className="font-medium shrink-0" style={{ color: "var(--text)" }}>
+              <div className="flex items-center gap-2 overflow-hidden flex-1 min-w-0">
+                <span className="font-medium truncate max-w-[45%]" style={{ color: "var(--text)" }}>
                   {item.name || "Unknown User"}
                 </span>
-                <span className="text-xs truncate flex-1 text-right" style={{ color: "var(--text-muted)" }}>
+                <span className="truncate flex-1 text-right" style={{ color: "var(--text-muted)" }}>
                   {item.item_name || "Unknown Food"}
                 </span>
               </div>
               {item.qty && item.qty > 1 && (
-                <Badge variant="accent" className="font-bold text-xs shrink-0">
+                <Badge variant="accent" className="font-bold text-[10px] shrink-0">
                   ×{item.qty}
                 </Badge>
               )}
