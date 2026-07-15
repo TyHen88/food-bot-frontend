@@ -1,26 +1,235 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans: var(--font-inter), var(--font-battambang), ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+}
+
+/* ── Design Tokens ─────────────────────────────────────────────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Brand palette */
+  --color-primary:        #2D6A4F;
+  --color-primary-hover:  #235c43;
+  --color-primary-light:  #E8F5EE;
+  --color-accent:         #E07B39;
+  --color-accent-hover:   #c96d2e;
+  --color-accent-light:   #FEF0E6;
+  --color-danger:         #DC2626;
+  --color-danger-light:   #FEE2E2;
+  --color-success:        #16A34A;
+  --color-success-light:  #DCFCE7;
+  --color-warning:        #D97706;
+  --color-warning-light:  #FEF3C7;
+
+  /* Light mode surfaces */
+  --bg:           #F8F7F4;
+  --surface:      #FFFFFF;
+  --surface-2:    #F1EFE9;
+  --surface-3:    #E8E5DE;
+  --border:       rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.16);
+
+  /* Light mode text */
+  --text:         #1A1714;
+  --text-2:       #4A4540;
+  --text-muted:   #8C8880;
+  --text-inverse: #FFFFFF;
+
+  /* Shadows */
+  --shadow-xs:    0 1px 2px rgba(26,23,20,0.06);
+  --shadow-sm:    0 2px 8px rgba(26,23,20,0.08);
+  --shadow-md:    0 4px 20px rgba(26,23,20,0.10);
+  --shadow-lg:    0 8px 40px rgba(26,23,20,0.12);
+
+  /* Radii */
+  --radius-sm:    6px;
+  --radius-md:    10px;
+  --radius-lg:    14px;
+  --radius-xl:    20px;
+
+  /* Layout */
+  --sidebar-w:    240px;
+  --sidebar-collapsed-w: 64px;
+  --bottom-nav-h: 68px;
+  --topbar-h:     56px;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* Dark mode overrides */
+.dark {
+  --bg:           #111210;
+  --surface:      #1C1E1A;
+  --surface-2:    #252724;
+  --surface-3:    #2E312D;
+  --border:       rgba(255,255,255,0.08);
+  --border-strong: rgba(255,255,255,0.16);
+  --text:         #F0EDE8;
+  --text-2:       #C4C0B8;
+  --text-muted:   #7A776F;
+  --text-inverse: #1A1714;
+
+  --shadow-xs:    0 1px 2px rgba(0,0,0,0.30);
+  --shadow-sm:    0 2px 8px rgba(0,0,0,0.35);
+  --shadow-md:    0 4px 20px rgba(0,0,0,0.40);
+  --shadow-lg:    0 8px 40px rgba(0,0,0,0.45);
+
+  --color-primary-light: rgba(45,106,79,0.20);
+  --color-accent-light:  rgba(224,123,57,0.20);
+  --color-danger-light:  rgba(220,38,38,0.20);
+  --color-success-light: rgba(22,163,74,0.20);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* ── Base Resets ────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+  font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent;
+  min-height: 100dvh;
 }
+
+/* ── Custom scrollbar ───────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ── Focus rings ────────────────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ── App shell ──────────────────────────────────────────────────────── */
+.app-shell {
+  display: flex;
+  min-height: 100dvh;
+}
+
+.app-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.page-content {
+  flex: 1;
+  padding: 24px 20px;
+  max-width: 900px;
+  width: 100%;
+  margin: 0 auto;
+  padding-bottom: calc(var(--bottom-nav-h) + 20px);
+}
+
+@media (min-width: 768px) {
+  .page-content {
+    padding: 28px 28px;
+    padding-bottom: 40px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .page-content { padding: 32px 36px; }
+}
+
+/* ── Page header ────────────────────────────────────────────────────── */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.page-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+.page-subtitle {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  margin: 2px 0 0;
+}
+
+/* ── Stats grid ─────────────────────────────────────────────────────── */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+/* ── Section headers ────────────────────────────────────────────────── */
+.section-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0 0 10px;
+}
+
+/* ── Dividers ───────────────────────────────────────────────────────── */
+.divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 16px 0;
+}
+
+/* ── Loading progress bar ───────────────────────────────────────────── */
+#nprogress-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: var(--color-primary);
+  z-index: 9999;
+  transition: width 0.3s ease;
+}
+
+/* ── Animations ─────────────────────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+
+.animate-fade-in  { animation: fadeIn  0.25s ease both; }
+.animate-slide-up { animation: slideUp 0.30s ease both; }
+.animate-spin     { animation: spin 0.7s linear infinite; }
+.animate-pulse    { animation: pulse 1.5s ease-in-out infinite; }

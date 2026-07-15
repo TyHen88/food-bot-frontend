@@ -1,65 +1,207 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useEffect, useState, useCallback } from "react";
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isToday, getDay } from "date-fns";
+import { ChevronLeft, ChevronRight, ShoppingBag, BarChart3, CalendarDays, X } from "lucide-react";
+import { api } from "@/lib/api";
+import { useToast } from "@/components/ui/Toast";
+import { Card, StatCard } from "@/components/ui/Card";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { Badge } from "@/components/ui/Badge";
+import { TopBar } from "@/components/layout/TopBar";
+import { DesktopHeader } from "@/components/layout/TopBar";
+import { useAuth } from "@/contexts/AuthContext";
+import { Button } from "@/components/ui/Button";
+import { OrderItemsEditor, type Order } from "@/components/orders/OrderItemsEditor";
+import { Trash2, Plus, Edit2, Check } from "lucide-react";
+
+interface DaySummary { count: number; orderIds: string[]; orders: Order[]; }
+
+export default function DashboardPage() {
+  const { isAdmin } = useAuth();
+  const { toast } = useToast();
+  const [month, setMonth] = useState(() => new Date());
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedDay, setSelectedDay] = useState<Date | null>(null);
+
+  const loadMonth = useCallback(async (m: Date) => {
+    setLoading(true);
+    setSelectedDay(null);
+    try {
+      const from = format(startOfMonth(m), "yyyy-MM-dd");
+      const to   = format(endOfMonth(m),   "yyyy-MM-dd");
+      const data = await api.get<Order[]>(`/orders?from=${from}&to=${to}`);
+      setOrders(Array.isArray(data) ? data : []);
+    } catch (e: unknown) {
+      toast((e as Error).message, "error");
+      setOrders([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => { loadMonth(month); }, [month, loadMonth]);
+
+  // Build per-day summaries from the fetched orders
+  const dayMap: Record<string, DaySummary> = {};
+  for (const o of orders) {
+    const key = o.order_date?.slice(0, 10) ?? "";
+    if (!key) continue;
+    if (!dayMap[key]) dayMap[key] = { count: 0, orderIds: [], orders: [] };
+    dayMap[key].count += o.item_count ?? o.items?.length ?? 1;
+    dayMap[key].orderIds.push(o.order_id);
+    dayMap[key].orders.push(o);
+  }
+
+  // Stats for this month
+  const totalItems    = orders.reduce((s, o) => s + (o.item_count ?? o.items?.length ?? 1), 0);
+  const activeDays    = Object.keys(dayMap).length;
+  const uniquePolls   = new Set(orders.map(o => o.poll_id)).size;
+
+  // Calendar
+  const days = eachDayOfInterval({ start: startOfMonth(month), end: endOfMonth(month) });
+  const firstDow = getDay(days[0]);
+
+  // Selected day data
+  const selectedKey  = selectedDay ? format(selectedDay, "yyyy-MM-dd") : null;
+  const selectedData = selectedKey ? dayMap[selectedKey] : null;
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <>
+      <TopBar title="Dashboard" />
+      <main className="page-content">
+        <DesktopHeader
+          title="Dashboard"
+          subtitle={format(month, "MMMM yyyy")}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+
+        {/* Stats */}
+        <div className="stats-grid mb-6">
+          {loading ? (
+            <><Skeleton className="h-20" /><Skeleton className="h-20" /><Skeleton className="h-20" /></>
+          ) : (
+            <>
+              <StatCard icon={<ShoppingBag size={18} />}  value={totalItems}  label="Items ordered"   color="primary" />
+              <StatCard icon={<BarChart3 size={18} />}    value={uniquePolls} label="Polls this month" color="accent" />
+              <StatCard icon={<CalendarDays size={18} />} value={activeDays}  label="Active days"      color="success" />
+            </>
+          )}
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
+
+        {/* Calendar card */}
+        <Card variant="default" padding="none" className="overflow-hidden">
+          {/* Month navigation */}
+          <div className="flex items-center justify-between px-5 py-3"
+            style={{ borderBottom: "1px solid var(--border)" }}>
+            <button
+              onClick={() => setMonth(m => { const n = new Date(m); n.setMonth(n.getMonth()-1); return n; })}
+              className="w-8 h-8 flex items-center justify-center rounded-[var(--radius-sm)] hover:bg-[var(--surface-2)] border-0 cursor-pointer"
+              style={{ background: "transparent", color: "var(--text-muted)" }}
+            ><ChevronLeft size={16} /></button>
+            <h2 className="text-sm font-semibold" style={{ color: "var(--text)", margin: 0 }}>
+              {format(month, "MMMM yyyy")}
+            </h2>
+            <button
+              onClick={() => setMonth(m => { const n = new Date(m); n.setMonth(n.getMonth()+1); return n; })}
+              className="w-8 h-8 flex items-center justify-center rounded-[var(--radius-sm)] hover:bg-[var(--surface-2)] border-0 cursor-pointer"
+              style={{ background: "transparent", color: "var(--text-muted)" }}
+            ><ChevronRight size={16} /></button>
+          </div>
+
+          {/* Day-of-week headers */}
+          <div className="grid grid-cols-7 px-2 pt-3 pb-1">
+            {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d => (
+              <div key={d} className="text-center text-[10px] font-semibold pb-2"
+                style={{ color: "var(--text-muted)" }}>{d}</div>
+            ))}
+          </div>
+
+          {/* Calendar grid */}
+          <div className="grid grid-cols-7 gap-y-1 px-2 pb-3">
+            {Array.from({ length: firstDow }).map((_, i) => <div key={`e-${i}`} />)}
+
+            {days.map(day => {
+              const key      = format(day, "yyyy-MM-dd");
+              const info     = dayMap[key];
+              const today    = isToday(day);
+              const selected = selectedKey === key;
+
+              return (
+                <button
+                  key={key}
+                  onClick={() => setSelectedDay(selected ? null : day)}
+                  className="flex flex-col items-center py-1.5 rounded-[var(--radius-md)] transition-all duration-150 border-0 cursor-pointer"
+                  style={{
+                    background: selected
+                      ? "var(--color-primary)"
+                      : today ? "var(--color-primary-light)" : "transparent",
+                    color: selected ? "#fff" : today ? "var(--color-primary)" : "var(--text)",
+                  }}
+                >
+                  <span className="text-sm font-semibold leading-none">{format(day, "d")}</span>
+                  {info ? (
+                    <span className="mt-1 text-[10px] font-bold px-1.5 rounded-full"
+                      style={{
+                        background: selected ? "rgba(255,255,255,0.25)" : "var(--color-accent-light)",
+                        color:      selected ? "#fff" : "var(--color-accent)",
+                      }}>
+                      {info.count}
+                    </span>
+                  ) : (
+                    <span className="mt-1 h-4" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </Card>
+
+        {/* Day detail panel */}
+        {selectedDay && (
+          <div className="mt-5 animate-slide-up">
+            <Card variant="default" padding="none" className="overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-3"
+                style={{ borderBottom: "1px solid var(--border)" }}>
+                <h3 className="text-sm font-semibold" style={{ color: "var(--text)", margin: 0 }}>
+                  {format(selectedDay, "EEEE, d MMMM")}
+                </h3>
+                <div className="flex items-center gap-2">
+                  {selectedData && (
+                    <Badge variant="accent">{selectedData.count} items</Badge>
+                  )}
+                  <button onClick={() => setSelectedDay(null)}
+                    className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-[var(--surface-2)] border-0 cursor-pointer"
+                    style={{ background: "transparent", color: "var(--text-muted)" }}>
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="px-5 py-4">
+                {!selectedData ? (
+                  <p className="text-sm text-center py-4" style={{ color: "var(--text-muted)" }}>
+                    No orders on this day
+                  </p>
+                ) : (
+                  <div className="space-y-4">
+                    {selectedData.orders.map(o => (
+                      <div key={o.order_id}>
+                        {/* Items Component */}
+                        <OrderItemsEditor 
+                          order={o} 
+                          isAdmin={isAdmin} 
+                          onSaved={() => loadMonth(month)} 
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </Card>
+          </div>
+        )}
       </main>
-    </div>
+    </>
   );
 }
