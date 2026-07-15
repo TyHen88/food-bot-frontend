@@ -123,7 +123,21 @@ function ScheduleContent() {
       // Scope to the group the Mini App was opened from; outside a group
       // (bot DM / dev browser) the backend returns every schedule.
       const data = await api.get<Schedule[]>(`/schedules${chatIdQuery(true)}`);
-      setSchedules(data ?? []);
+      // Google Sheets numericises cells, so fields like target_chat_ids
+      // ("-1002308775160") can arrive as numbers — coerce everything we
+      // call string methods on, or the page crashes mid-render.
+      setSchedules((data ?? []).map(s => ({
+        ...s,
+        name: String(s.name ?? ""),
+        message_text: String(s.message_text ?? ""),
+        image: String(s.image ?? ""),
+        image_name: String(s.image_name ?? ""),
+        run_date: String(s.run_date ?? ""),
+        time_of_day: String(s.time_of_day ?? ""),
+        days_of_week: String(s.days_of_week ?? ""),
+        target_chat_ids: String(s.target_chat_ids ?? "ALL"),
+        is_active: s.is_active === true || String(s.is_active).toUpperCase() === "TRUE",
+      })));
     } catch (e: unknown) {
       toast((e as Error).message, "error");
     } finally {
