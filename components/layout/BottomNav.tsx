@@ -9,7 +9,14 @@ import { clsx } from "clsx";
 import { useAuth } from "@/contexts/AuthContext";
 import { hapticImpact } from "@/lib/telegram";
 
-const NAV = [
+interface NavItem {
+  href: string;
+  icon: React.ComponentType<any>;
+  label: string;
+  adminOnly?: boolean;
+}
+
+const NAV: NavItem[] = [
   { href: "/",          icon: LayoutDashboard, label: "Dashboard" },
   { href: "/orders",    icon: ShoppingBag,     label: "Orders" },
   { href: "/invoices",  icon: Receipt,         label: "Invoices" },
