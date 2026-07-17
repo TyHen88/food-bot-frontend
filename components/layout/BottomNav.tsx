@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  LayoutDashboard, ShoppingBag, Users, Settings, CalendarClock, BookTemplate, Receipt, Sparkles,
+  LayoutDashboard, ShoppingBag, Users, CalendarClock, Receipt, type LucideIcon,
 } from "lucide-react";
 import { clsx } from "clsx";
 import { useAuth } from "@/contexts/AuthContext";
@@ -11,7 +11,7 @@ import { hapticImpact } from "@/lib/telegram";
 
 interface NavItem {
   href: string;
-  icon: React.ComponentType<any>;
+  icon: LucideIcon;
   label: string;
   adminOnly?: boolean;
 }
@@ -20,7 +20,7 @@ const NAV: NavItem[] = [
   { href: "/",          icon: LayoutDashboard, label: "Dashboard" },
   { href: "/orders",    icon: ShoppingBag,     label: "Orders" },
   { href: "/invoices",  icon: Receipt,         label: "Invoices" },
-  { href: "/ai",        icon: Sparkles,        label: "AI" },
+  { href: "/schedule",  icon: CalendarClock,   label: "Schedule", adminOnly: true },
   { href: "/members",   icon: Users,           label: "Members" },
 ];
 

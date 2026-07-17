@@ -168,6 +168,7 @@ export default function OrdersPage() {
 
   const displayDate = format(new Date(date + "T00:00:00"), "EEEE, d MMMM yyyy");
   const headerDate = format(new Date(date + "T00:00:00"), "EEEE • LLL d, yyyy");
+  const isTodaySelected = date === format(new Date(), "yyyy-MM-dd");
 
   return (
     <>
@@ -192,7 +193,7 @@ export default function OrdersPage() {
             <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">Orders</h1>
             <div className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] font-medium">
               <Calendar size={13} />
-              <span>Today, {headerDate}</span>
+              <span>{isTodaySelected ? "Today, " : ""}{headerDate}</span>
             </div>
           </div>
           <div className="flex gap-2">
@@ -260,10 +261,18 @@ export default function OrdersPage() {
             <ChevronLeft size={16} />
           </button>
           
-          <div className="flex items-center gap-2 text-xs font-semibold text-[var(--text)] select-none">
+          {/* Tapping the label opens the native date picker (invisible input overlay). */}
+          <label className="relative flex items-center gap-2 text-xs font-semibold text-[var(--text)] select-none cursor-pointer">
             <Calendar size={14} className="text-[var(--text-muted)]" />
-            <span>Today, {displayDate}</span>
-          </div>
+            <span>{isTodaySelected ? "Today, " : ""}{displayDate}</span>
+            <input
+              type="date"
+              value={date}
+              onChange={e => e.target.value && setDate(e.target.value)}
+              aria-label="Pick a date"
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            />
+          </label>
 
           <button onClick={nextDay}
             className="w-8 h-8 flex items-center justify-center rounded-[var(--radius-sm)] hover:bg-[var(--surface-2)] border-0 cursor-pointer text-[var(--text-muted)]"

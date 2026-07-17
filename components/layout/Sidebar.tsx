@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, ShoppingBag, BookTemplate, CalendarClock,
   Users, Settings, History, ChevronLeft, ChevronRight, UtensilsCrossed, Receipt,
-  Sparkles,
 } from "lucide-react";
 import { clsx } from "clsx";
 import { useState } from "react";
@@ -24,7 +23,6 @@ const NAV: NavItem[] = [
   { href: "/",          icon: <LayoutDashboard size={18} />, label: "Dashboard" },
   { href: "/orders",    icon: <ShoppingBag size={18} />,     label: "Orders" },
   { href: "/invoices",  icon: <Receipt size={18} />,         label: "Invoices" },
-  { href: "/ai",        icon: <Sparkles size={18} />,        label: "Ask AI" },
   { href: "/templates", icon: <BookTemplate size={18} />,    label: "Templates", adminOnly: true },
   { href: "/schedule",  icon: <CalendarClock size={18} />,   label: "Schedule",  adminOnly: true },
   { href: "/members",   icon: <Users size={18} />,           label: "Members" },

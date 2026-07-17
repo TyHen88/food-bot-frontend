@@ -18,10 +18,10 @@ interface Message {
 
 // Quick start suggestion prompts
 const SUGGESTIONS = [
-  "please count my order start from 2026-may-01 to today",
-  "How many times did I order this month?",
-  "What is my order history for last week?",
-  "Can you list my orders in June 2026?",
+  "How much did I spend this month?",
+  "Who ordered the most this week?",
+  "What was on the menu today?",
+  "How do I use this bot?",
 ];
 
 // Helper component to render Telegram-style Markdown v1 safely
@@ -204,7 +204,8 @@ export default function AIPage() {
                 Ask Foodbot AI
               </h2>
               <p className="text-xs mb-6 max-w-sm" style={{ color: "var(--text-muted)" }}>
-                Ask me to count or summarize your orders, check your past history, or even ask general culinary questions!
+                Your assistant for this Food Bot — ask about your group&apos;s orders,
+                spending, invoices, the food polls, or how to use the bot.
               </p>
 
               {/* Suggestions */}
@@ -215,7 +216,7 @@ export default function AIPage() {
                     onClick={() => handleSend(s)}
                     className="text-left text-xs p-3 rounded-[var(--radius-md)] border border-[var(--border)] hover:bg-[var(--surface-2)] transition-colors bg-transparent text-[var(--text-2)] cursor-pointer"
                   >
-                    "{s}"
+                    &ldquo;{s}&rdquo;
                   </button>
                 ))}
               </div>

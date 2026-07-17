@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { Check, X, Plus, Trash2 } from "lucide-react";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { Check, X, Plus, Trash2, Upload } from "lucide-react";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/ui/Toast";
 import { Card } from "@/components/ui/Card";
@@ -316,6 +316,9 @@ function PayersSection() {
   const [editing, setEditing] = useState<Payer | null>(null);
   const [saving, setSaving] = useState(false);
   const [editForm, setEditForm] = useState({ full_name: "", qr_filename: "", khqr_text: "" });
+  const [uploading, setUploading] = useState(false);
+  const [qrPreview, setQrPreview] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -338,6 +341,48 @@ function PayersSection() {
       qr_filename: p.qr_filename || "",
       khqr_text: p.khqr_text || "",
     });
+    // Show the currently stored QR (assets file or uploaded image), if any.
+    setQrPreview(null);
+    if (p.qr_filename) {
+      api.get<{ qr: string }>(`/payers/${p.user_id}/qr`)
+        .then(res => { if (res?.qr) setQrPreview(res.qr); })
+        .catch(() => { /* preview is best-effort */ });
+    }
+  }
+
+  async function uploadQrImage(file: File) {
+    if (!file.type.startsWith("image/")) {
+      toast("Please choose an image file", "error");
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      toast("Image too large (max 8MB)", "error");
+      return;
+    }
+    setUploading(true);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error("Could not read the file"));
+        reader.readAsDataURL(file);
+      });
+      // Reuses the schedule image upload: the bot registers the photo with
+      // Telegram and returns a reusable file_id we store on the payer row.
+      const res = await api.post<{ file_id: string }>("/schedules/upload-image", {
+        data_base64: dataUrl,
+        filename: file.name,
+      });
+      if (!res?.file_id) throw new Error("Upload failed — no file id returned");
+      setEditForm(f => ({ ...f, qr_filename: res.file_id }));
+      setQrPreview(dataUrl);
+      toast("QR image uploaded — press Save to keep it", "success");
+    } catch (e: unknown) {
+      toast((e as Error).message, "error");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
   }
 
   async function savePayer() {
@@ -390,7 +435,9 @@ function PayersSection() {
                     {p.username ? `@${p.username} · ` : ""}Paid {p.times_paid || 0}×
                   </p>
                   {p.qr_filename && (
-                    <Badge variant="primary" className="text-[10px] mt-2">QR: {p.qr_filename}</Badge>
+                    <Badge variant="primary" className="text-[10px] mt-2">
+                      QR: {p.qr_filename.includes(".") ? p.qr_filename : "uploaded image"}
+                    </Badge>
                   )}
                 </div>
                 <Button variant="secondary" size="sm" onClick={() => openEdit(p)}>Edit</Button>
@@ -419,13 +466,51 @@ function PayersSection() {
             value={editForm.full_name}
             onChange={e => setEditForm(f => ({ ...f, full_name: e.target.value }))}
           />
-          <Input
-            label="QR image filename"
-            placeholder="payment_qr.png"
-            value={editForm.qr_filename}
-            onChange={e => setEditForm(f => ({ ...f, qr_filename: e.target.value }))}
-          />
-          <div className="text-xs text-[var(--text-muted)] -mt-3">A file in the bot&apos;s assets/ folder.</div>
+          <div className="space-y-2">
+            <label className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+              Payment QR image
+            </label>
+            {qrPreview && (
+              <div className="flex justify-center rounded-[var(--radius-md)] border p-2"
+                style={{ borderColor: "var(--border)", background: "#fff" }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={qrPreview} alt="Payment QR" className="w-36 max-w-full" />
+              </div>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={e => {
+                const file = e.target.files?.[0];
+                if (file) uploadQrImage(file);
+              }}
+            />
+            <div className="flex gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={uploading}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload size={13} /> {editForm.qr_filename ? "Replace image" : "Upload image"}
+              </Button>
+              {editForm.qr_filename && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => { setEditForm(f => ({ ...f, qr_filename: "" })); setQrPreview(null); }}
+                >
+                  <Trash2 size={13} /> Remove
+                </Button>
+              )}
+            </div>
+            <div className="text-xs text-[var(--text-muted)]">
+              Attached to invoices as “scan to pay”. Uploading needs the admin to
+              have a DM open with the bot (/start).
+            </div>
+          </div>
           <div className="space-y-1">
             <label className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
               KHQR text
