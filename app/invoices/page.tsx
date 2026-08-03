@@ -26,6 +26,20 @@ interface InvoiceRow {
   last_sent_at: string;
   /** The signed-in caller's own share of this invoice (computed server-side). */
   my_amount?: number;
+  /** Riel equivalents, converted at the rate PINNED to this invoice when it
+   *  was sent — not today's rate, so historical amounts never move. Null on
+   *  invoices sent before exchange rates were recorded. */
+  my_amount_khr?: number | null;
+  total_khr?: number | null;
+  usd_khr_rate?: number;
+  rate_date?: string;
+}
+
+/** "56,700៛", or null when this invoice has no pinned rate. */
+function khr(amount?: number | null): string | null {
+  return amount === null || amount === undefined
+    ? null
+    : `${Math.round(amount).toLocaleString("en-US")}៛`;
 }
 
 /** Rows rendered initially and added per "Load more" click. */
@@ -49,10 +63,15 @@ export default function InvoicesPage() {
     [invoices, fromDate, toDate]
   );
 
+  // Riel totals sum the per-invoice riel amounts rather than converting the
+  // dollar total once: each invoice was pinned to its own rate, so there is
+  // no single rate that could convert the range correctly.
   const stats = useMemo(() => ({
     orders: visibleInvoices.length,
     amount: visibleInvoices.reduce((s, inv) => s + (inv.total ?? 0), 0),
     mine: visibleInvoices.reduce((s, inv) => s + (inv.my_amount ?? 0), 0),
+    amountKhr: visibleInvoices.reduce((s, inv) => s + (inv.total_khr ?? 0), 0),
+    mineKhr: visibleInvoices.reduce((s, inv) => s + (inv.my_amount_khr ?? 0), 0),
   }), [visibleInvoices]);
 
   // Pagination is render-only: the cards above always cover the whole
@@ -107,7 +126,9 @@ export default function InvoicesPage() {
               <div className="text-sm sm:text-xl font-bold leading-tight truncate font-mono" style={{ color: "var(--text)" }}>
                 {loading ? "…" : `$${stats.amount.toFixed(2)}`}
               </div>
-              <div className="text-[10px] font-semibold" style={{ color: "var(--text-muted)" }}>Total Amount</div>
+              <div className="text-[10px] font-semibold" style={{ color: "var(--text-muted)" }}>
+                Total Amount{!loading && stats.amountKhr > 0 && ` · ${khr(stats.amountKhr)}`}
+              </div>
             </div>
           </Card>
 
@@ -119,7 +140,9 @@ export default function InvoicesPage() {
               <div className="text-sm sm:text-xl font-bold leading-tight truncate font-mono" style={{ color: "var(--color-primary)" }}>
                 {loading ? "…" : `$${stats.mine.toFixed(2)}`}
               </div>
-              <div className="text-[10px] font-semibold" style={{ color: "var(--text-muted)" }}>My Amount</div>
+              <div className="text-[10px] font-semibold" style={{ color: "var(--text-muted)" }}>
+                My Amount{!loading && stats.mineKhr > 0 && ` · ${khr(stats.mineKhr)}`}
+              </div>
             </div>
           </Card>
         </div>
@@ -209,8 +232,15 @@ export default function InvoicesPage() {
                       {inv.payer_name ? ` · 💳 ${inv.payer_name}` : ""}
                     </p>
                   </div>
-                  <span className="text-sm font-bold font-mono shrink-0" style={{ color: "var(--color-primary)" }}>
-                    ${(inv.total ?? 0).toFixed(2)}
+                  <span className="text-right shrink-0">
+                    <span className="text-sm font-bold font-mono block" style={{ color: "var(--color-primary)" }}>
+                      ${(inv.total ?? 0).toFixed(2)}
+                    </span>
+                    {khr(inv.total_khr) && (
+                      <span className="text-[10px] font-mono block" style={{ color: "var(--text-muted)" }}>
+                        {khr(inv.total_khr)}
+                      </span>
+                    )}
                   </span>
                   <ChevronRight size={14} className="shrink-0" style={{ color: "var(--text-muted)" }} />
                 </div>
