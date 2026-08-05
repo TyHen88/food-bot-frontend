@@ -45,11 +45,15 @@ export function StatCard({
   value,
   label,
   color = "primary",
+  padding = "sm",
+  className,
 }: {
   icon: ReactNode;
   value: string | number;
   label: string;
   color?: "primary" | "accent" | "success" | "warning";
+  padding?: "none" | "sm" | "md" | "lg";
+  className?: string;
 }) {
   const colorMap: Record<string, string> = {
     primary: "var(--color-primary)",
@@ -65,18 +69,18 @@ export function StatCard({
   };
 
   return (
-    <Card variant="default" padding="md" className="flex items-start gap-3">
+    <Card variant="default" padding={padding} className={clsx("flex items-center gap-2.5", className)}>
       <div
-        className="flex items-center justify-center w-10 h-10 rounded-[var(--radius-md)] flex-shrink-0"
+        className="flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 rounded-[var(--radius-md)] flex-shrink-0 text-sm"
         style={{ background: bgMap[color], color: colorMap[color] }}
       >
         {icon}
       </div>
-      <div className="min-w-0">
-        <div className="text-2xl font-bold tracking-tight" style={{ color: "var(--text)" }}>
+      <div className="min-w-0 flex-1">
+        <div className="text-base sm:text-lg font-bold tracking-tight truncate leading-tight" style={{ color: "var(--text)" }}>
           {value}
         </div>
-        <div className="text-xs font-medium mt-0.5" style={{ color: "var(--text-muted)" }}>
+        <div className="text-[10px] sm:text-xs font-medium truncate mt-0.5" style={{ color: "var(--text-muted)" }}>
           {label}
         </div>
       </div>

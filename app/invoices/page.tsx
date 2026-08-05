@@ -55,12 +55,17 @@ export default function InvoicesPage() {
   const [toDate, setToDate] = useState("");
 
   // order_date is "yyyy-MM-dd", so plain string comparison sorts correctly.
+  const [scopeFilter, setScopeFilter] = useState<"all" | "mine">("all");
+
+  // order_date is "yyyy-MM-dd", so plain string comparison sorts correctly.
   const visibleInvoices = useMemo(
-    () => invoices.filter(inv =>
-      (!fromDate || inv.order_date >= fromDate) &&
-      (!toDate || inv.order_date <= toDate)
-    ),
-    [invoices, fromDate, toDate]
+    () => invoices.filter(inv => {
+      if (fromDate && inv.order_date < fromDate) return false;
+      if (toDate && inv.order_date > toDate) return false;
+      if (scopeFilter === "mine" && (!inv.my_amount || inv.my_amount <= 0)) return false;
+      return true;
+    }),
+    [invoices, fromDate, toDate, scopeFilter]
   );
 
   // Riel totals sum the per-invoice riel amounts rather than converting the
@@ -77,7 +82,7 @@ export default function InvoicesPage() {
   // Pagination is render-only: the cards above always cover the whole
   // filtered range. Picking a new range starts back at the first page.
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  useEffect(() => { setVisibleCount(PAGE_SIZE); }, [fromDate, toDate]);
+  useEffect(() => { setVisibleCount(PAGE_SIZE); }, [fromDate, toDate, scopeFilter]);
   const shownInvoices = visibleInvoices.slice(0, visibleCount);
 
   const load = useCallback(async () => {
@@ -147,40 +152,65 @@ export default function InvoicesPage() {
           </Card>
         </div>
 
-        {/* Date-range filter */}
-        <div className="flex items-center gap-2 mb-4 flex-wrap">
-          <div className="relative flex-1 min-w-[128px] sm:max-w-[180px]">
-            <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
-            <input
-              type="date"
-              value={fromDate}
-              onChange={e => setFromDate(e.target.value)}
-              aria-label="From date"
-              className="w-full pl-9 pr-2 py-2 text-xs font-medium rounded-[var(--radius-md)] border focus:outline-none focus:ring-1 cursor-pointer"
-              style={{ background: "var(--surface)", color: fromDate ? "var(--text)" : "var(--text-muted)", borderColor: "var(--border)" }}
-            />
-          </div>
-          <span className="text-[10px] font-semibold shrink-0" style={{ color: "var(--text-muted)" }}>to</span>
-          <div className="relative flex-1 min-w-[128px] sm:max-w-[180px]">
-            <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
-            <input
-              type="date"
-              value={toDate}
-              onChange={e => setToDate(e.target.value)}
-              aria-label="To date"
-              className="w-full pl-9 pr-2 py-2 text-xs font-medium rounded-[var(--radius-md)] border focus:outline-none focus:ring-1 cursor-pointer"
-              style={{ background: "var(--surface)", color: toDate ? "var(--text)" : "var(--text-muted)", borderColor: "var(--border)" }}
-            />
-          </div>
-          {(fromDate || toDate) && (
+        {/* Date-range filter & Scope Toggle */}
+        <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
+          <div className="flex items-center gap-1.5 bg-[var(--surface-2)] p-1 rounded-[var(--radius-md)] border border-[var(--border)]">
             <button
-              onClick={() => { setFromDate(""); setToDate(""); }}
-              className="flex items-center gap-1 px-2.5 py-2 text-xs font-semibold rounded-[var(--radius-md)] border cursor-pointer hover:bg-[var(--surface-2)]"
-              style={{ background: "var(--surface)", color: "var(--text-muted)", borderColor: "var(--border)" }}
+              onClick={() => setScopeFilter("all")}
+              className={`px-2.5 py-1 text-xs font-semibold rounded-[var(--radius-sm)] transition-all cursor-pointer ${
+                scopeFilter === "all"
+                  ? "bg-[var(--surface)] text-[var(--text)] shadow-sm font-bold"
+                  : "text-[var(--text-muted)] hover:text-[var(--text)]"
+              }`}
             >
-              <X size={13} /> Clear
+              All Invoices
             </button>
-          )}
+            <button
+              onClick={() => setScopeFilter("mine")}
+              className={`px-2.5 py-1 text-xs font-semibold rounded-[var(--radius-sm)] transition-all cursor-pointer ${
+                scopeFilter === "mine"
+                  ? "bg-[var(--color-primary)] text-white shadow-sm font-bold"
+                  : "text-[var(--text-muted)] hover:text-[var(--text)]"
+              }`}
+            >
+              My Invoices Only
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative flex-1 min-w-[128px] sm:max-w-[160px]">
+              <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
+              <input
+                type="date"
+                value={fromDate}
+                onChange={e => setFromDate(e.target.value)}
+                aria-label="From date"
+                className="w-full pl-9 pr-2 py-1.5 text-xs font-medium rounded-[var(--radius-md)] border focus:outline-none focus:ring-1 cursor-pointer"
+                style={{ background: "var(--surface)", color: fromDate ? "var(--text)" : "var(--text-muted)", borderColor: "var(--border)" }}
+              />
+            </div>
+            <span className="text-[10px] font-semibold shrink-0" style={{ color: "var(--text-muted)" }}>to</span>
+            <div className="relative flex-1 min-w-[128px] sm:max-w-[160px]">
+              <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
+              <input
+                type="date"
+                value={toDate}
+                onChange={e => setToDate(e.target.value)}
+                aria-label="To date"
+                className="w-full pl-9 pr-2 py-1.5 text-xs font-medium rounded-[var(--radius-md)] border focus:outline-none focus:ring-1 cursor-pointer"
+                style={{ background: "var(--surface)", color: toDate ? "var(--text)" : "var(--text-muted)", borderColor: "var(--border)" }}
+              />
+            </div>
+            {(fromDate || toDate) && (
+              <button
+                onClick={() => { setFromDate(""); setToDate(""); }}
+                className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-[var(--radius-md)] border cursor-pointer hover:bg-[var(--surface-2)]"
+                style={{ background: "var(--surface)", color: "var(--text-muted)", borderColor: "var(--border)" }}
+              >
+                <X size={13} /> Clear
+              </button>
+            )}
+          </div>
         </div>
 
         {loading ? (
@@ -190,11 +220,11 @@ export default function InvoicesPage() {
             </div>
           </Card>
         ) : visibleInvoices.length === 0 ? (
-          (fromDate || toDate) ? (
+          (fromDate || toDate || scopeFilter === "mine") ? (
             <EmptyState
               icon={<Receipt size={40} />}
-              title="No invoices in this range"
-              description="Nothing was invoiced in the selected dates. Try a different range or clear the filter."
+              title="No invoices found"
+              description="No invoices match the selected filter options."
             />
           ) : (
             <EmptyState
@@ -226,6 +256,15 @@ export default function InvoicesPage() {
                       {inv.sent_count > 1 && (
                         <Badge variant="default" className="text-[10px] shrink-0">×{inv.sent_count}</Badge>
                       )}
+                      {inv.my_amount && inv.my_amount > 0 ? (
+                        <Badge variant="admin" className="text-[10px] shrink-0 font-bold">
+                          My Share: ${inv.my_amount.toFixed(2)}
+                        </Badge>
+                      ) : (
+                        <Badge variant="default" className="text-[10px] shrink-0">
+                          Not in order
+                        </Badge>
+                      )}
                     </div>
                     <p className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>
                       {inv.order_date} · {inv.person_count} {inv.person_count === 1 ? "person" : "people"}
@@ -233,8 +272,8 @@ export default function InvoicesPage() {
                     </p>
                   </div>
                   <span className="text-right shrink-0">
-                    <span className="text-sm font-bold font-mono block" style={{ color: "var(--color-primary)" }}>
-                      ${(inv.total ?? 0).toFixed(2)}
+                    <span className="text-sm font-bold font-mono block text-[var(--text)]">
+                      Total: ${(inv.total ?? 0).toFixed(2)}
                     </span>
                     {khr(inv.total_khr) && (
                       <span className="text-[10px] font-mono block" style={{ color: "var(--text-muted)" }}>
