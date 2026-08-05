@@ -10,9 +10,10 @@ interface ModalProps {
   children: ReactNode;
   footer?: ReactNode;
   maxWidth?: string;
+  fullHeight?: boolean;
 }
 
-export function Modal({ open, onClose, title, children, footer, maxWidth = "480px" }: ModalProps) {
+export function Modal({ open, onClose, title, children, footer, maxWidth = "480px", fullHeight = false }: ModalProps) {
   // Close on Escape
   useEffect(() => {
     if (!open) return;
@@ -48,7 +49,8 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = "480p
           boxShadow: "var(--shadow-lg)",
           animation: "slideUp 0.25s cubic-bezier(0.34,1.56,0.64,1)",
           borderRadius: "var(--radius-xl) var(--radius-xl) 0 0",
-          maxHeight: "90dvh",
+          maxHeight: fullHeight ? "95dvh" : "90dvh",
+          height: fullHeight ? "95dvh" : undefined,
         }}
       >
         {/* Header */}
