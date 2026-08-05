@@ -42,15 +42,16 @@ export function Modal({ open, onClose, title, children, footer, maxWidth = "480p
 
       {/* Sheet */}
       <div
-        className="relative w-full sm:rounded-[var(--radius-xl)] overflow-hidden flex flex-col"
+        className={`relative w-full overflow-hidden flex flex-col ${
+          fullHeight 
+            ? "h-full sm:h-[95dvh] max-h-full sm:max-h-[95dvh] rounded-t-[var(--radius-xl)] sm:rounded-[var(--radius-xl)]" 
+            : "max-h-[90dvh] rounded-t-[var(--radius-xl)] sm:rounded-[var(--radius-xl)]"
+        }`}
         style={{
           maxWidth,
           background: "var(--surface)",
           boxShadow: "var(--shadow-lg)",
           animation: "slideUp 0.25s cubic-bezier(0.34,1.56,0.64,1)",
-          borderRadius: "var(--radius-xl) var(--radius-xl) 0 0",
-          maxHeight: fullHeight ? "95dvh" : "90dvh",
-          height: fullHeight ? "95dvh" : undefined,
         }}
       >
         {/* Header */}

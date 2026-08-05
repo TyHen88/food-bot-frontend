@@ -317,7 +317,7 @@ export function MemberSpendModal({
       fullHeight={true}
       footer={<Button size="sm" onClick={onClose}>Close</Button>}
     >
-      <div className="flex flex-col h-full space-y-3.5">
+      <div className="space-y-4">
         {/* Full Member Profile Banner */}
         <Card variant="flat" padding="sm" className="bg-[var(--surface-2)] border border-[var(--border)]">
           <div className="flex items-center gap-3">
@@ -473,8 +473,8 @@ export function MemberSpendModal({
         </Card>
 
         {/* Items & Dishes Breakdown List */}
-        <div className="flex-1 min-h-0 flex flex-col space-y-2">
-          <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)] px-1 shrink-0">
+        <div className="space-y-2">
+          <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)] px-1">
             Complete Order History ({memberFilteredOrders.length})
           </h4>
 
@@ -490,7 +490,7 @@ export function MemberSpendModal({
               description="This member has no recorded food orders matching the selected date range."
             />
           ) : (
-            <div className="flex-1 overflow-y-auto pr-1 space-y-2.5 min-h-0">
+            <div className="space-y-3">
               {shownOrders.map((ord) => {
                 const inv = invoiceMapByOrderId.get(ord.order_id);
                 const payer = inv?.payer_name || ord.paid_by?.username || "Payer";
