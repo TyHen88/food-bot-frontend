@@ -7,7 +7,6 @@ import {
   Wallet, 
   SlidersHorizontal,
   RefreshCw,
-  Search,
   Utensils,
   CreditCard,
   ChevronDown,
@@ -67,11 +66,9 @@ export default function MyOrdersPage() {
   const [invoiceDetailsMap, setInvoiceDetailsMap] = useState<Record<string, InvoicePersonDetail[]>>({});
   const [loading, setLoading] = useState(true);
 
-  // Date Filtering State
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("all");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
 
   // Normalization helpers for user matching
   const myUserId = useMemo(() => {
@@ -85,6 +82,7 @@ export default function MyOrdersPage() {
 
   const myNames = useMemo(() => {
     const set = new Set<string>();
+    if ((profile as any)?.name) set.add(normName((profile as any).name));
     if (profile?.username) set.add(normName(profile.username));
     if (profile?.full_name) set.add(normName(profile.full_name));
     if (user?.username) set.add(normName(user.username));
@@ -127,11 +125,12 @@ export default function MyOrdersPage() {
       // Fetch invoice details for invoices to get exact prices & subtotals per user
       const detailsMap: Record<string, InvoicePersonDetail[]> = {};
       await Promise.all(
-        fetchedInvoices.slice(0, 30).map(async (inv) => {
+        fetchedInvoices.slice(0, 100).map(async (inv) => {
           try {
             const detail = await api.get<{ details?: InvoicePersonDetail[] }>(`/invoices/${inv.invoice_id}`);
             if (detail?.details) {
-              detailsMap[inv.order_id || inv.invoice_id] = detail.details;
+              if (inv.order_id) detailsMap[inv.order_id] = detail.details;
+              if (inv.invoice_id) detailsMap[inv.invoice_id] = detail.details;
             }
           } catch (_) {
             // Ignore single invoice fetch failure
@@ -173,21 +172,12 @@ export default function MyOrdersPage() {
     }
   }
 
-  // Filter orders by date & query, and filter items ONLY to user's items
+  // Filter orders by date, and filter items ONLY to user's items
   const myFilteredOrders = useMemo(() => {
     return orders
       .filter((ord) => {
         if (fromDate && ord.order_date < fromDate) return false;
         if (toDate && ord.order_date > toDate) return false;
-        if (searchQuery) {
-          const q = searchQuery.toLowerCase();
-          const matchChat = ord.chat_title?.toLowerCase().includes(q);
-          const matchQuestion = ord.question?.toLowerCase().includes(q);
-          const matchItem = ord.items.some(
-            (it) => isMyItem(it) && (it.item_name || "").toLowerCase().includes(q)
-          );
-          if (!matchChat && !matchQuestion && !matchItem) return false;
-        }
         return true;
       })
       .map((ord) => {
@@ -199,11 +189,11 @@ export default function MyOrdersPage() {
         };
       })
       .filter((ord) => ord.myItems.length > 0);
-  }, [orders, fromDate, toDate, searchQuery, isMyItem]);
+  }, [orders, fromDate, toDate, isMyItem]);
 
   // Pagination state & Infinite Scroll
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  useEffect(() => { setVisibleCount(PAGE_SIZE); }, [fromDate, toDate, searchQuery, quickFilter]);
+  useEffect(() => { setVisibleCount(PAGE_SIZE); }, [fromDate, toDate, quickFilter]);
   const shownOrders = useMemo(() => myFilteredOrders.slice(0, visibleCount), [myFilteredOrders, visibleCount]);
 
   const observerTarget = useRef<HTMLDivElement | null>(null);
@@ -288,31 +278,29 @@ export default function MyOrdersPage() {
       <TopBar title="My Orders" />
       
       <div className="max-w-4xl mx-auto px-4 pt-4 space-y-5">
-        <DesktopHeader 
-          title="My Food Orders" 
-          subtitle="View your personal order history, items count, paid totals, and dish breakdown" 
-        />
 
-        {/* 1. Filter Section (Quick Filters & Custom Date Range) */}
+        {/* 1. Filter Section (Dropdown Selection & Custom Date Range) */}
         <Card variant="flat" padding="md" className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
-              <span className="text-xs font-semibold text-[var(--text-muted)] mr-1 flex items-center gap-1">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 flex-1 sm:flex-none">
+              <span className="text-xs font-semibold text-[var(--text-muted)] hidden sm:inline-flex items-center gap-1">
                 <SlidersHorizontal size={14} /> Filter:
               </span>
-              {(["all", "today", "week", "month"] as QuickFilter[]).map((f) => (
-                <button
-                  key={f}
-                  onClick={() => handleQuickFilter(f)}
-                  className={`px-3 py-1 text-xs font-semibold rounded-full transition-all cursor-pointer ${
-                    quickFilter === f
-                      ? "bg-[var(--color-primary)] text-white shadow-sm"
-                      : "bg-[var(--surface-2)] text-[var(--text-2)] hover:bg-[var(--border)]"
-                  }`}
+              <div className="relative flex-1 sm:w-44">
+                <SlidersHorizontal size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)] pointer-events-none z-10" />
+                <select
+                  value={quickFilter}
+                  onChange={(e) => handleQuickFilter(e.target.value as QuickFilter)}
+                  className="w-full pl-9 pr-8 py-1.5 text-xs font-semibold rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:border-[var(--color-primary)] cursor-pointer min-h-[38px] appearance-none"
                 >
-                  {f === "all" ? "All Time" : f === "today" ? "Today" : f === "week" ? "This Week" : "This Month"}
-                </button>
-              ))}
+                  <option value="all">All Time</option>
+                  <option value="today">Today</option>
+                  <option value="week">This Week</option>
+                  <option value="month">This Month</option>
+                  {quickFilter === "custom" && <option value="custom">Custom Range</option>}
+                </select>
+                <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] pointer-events-none z-10" />
+              </div>
             </div>
 
             <Button
@@ -320,23 +308,13 @@ export default function MyOrdersPage() {
               size="sm"
               onClick={loadData}
               disabled={loading}
-              className="gap-1.5 text-xs"
+              className="gap-1.5 text-xs shrink-0"
             >
               <RefreshCw size={13} className={loading ? "animate-spin" : ""} /> Refresh
             </Button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 border-t border-[var(--border)]">
-            <div className="relative">
-              <Search size={14} className="absolute left-3 top-2.5 text-[var(--text-muted)]" />
-              <input
-                type="text"
-                placeholder="Search dish or group..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:border-[var(--color-primary)]"
-              />
-            </div>
+          <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[var(--border)]">
             <div className="relative">
               <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--text-muted)] z-10" />
               <input
@@ -346,7 +324,8 @@ export default function MyOrdersPage() {
                   setFromDate(e.target.value);
                   setQuickFilter("custom");
                 }}
-                className="w-full pl-9 pr-3 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:border-[var(--color-primary)] cursor-pointer min-h-[38px]"
+                aria-label="From Date"
+                className="w-full pl-9 pr-2.5 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:border-[var(--color-primary)] cursor-pointer min-h-[38px]"
               />
             </div>
             <div className="relative">
@@ -358,7 +337,8 @@ export default function MyOrdersPage() {
                   setToDate(e.target.value);
                   setQuickFilter("custom");
                 }}
-                className="w-full pl-9 pr-3 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:border-[var(--color-primary)] cursor-pointer min-h-[38px]"
+                aria-label="To Date"
+                className="w-full pl-9 pr-2.5 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:border-[var(--color-primary)] cursor-pointer min-h-[38px]"
               />
             </div>
           </div>

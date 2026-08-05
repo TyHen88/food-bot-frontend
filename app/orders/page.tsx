@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { format } from "date-fns";
 import { 
   ClipboardCopy, 
@@ -62,6 +62,22 @@ export default function OrdersPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeInvoiceOrder, setActiveInvoiceOrder] = useState<Order | null>(null);
   const [viewInvoiceId, setViewInvoiceId] = useState<string | null>(null);
+  const dateInputRef = useRef<HTMLInputElement>(null);
+
+  const openDatePicker = () => {
+    const el = dateInputRef.current as any;
+    if (el) {
+      if (typeof el.showPicker === "function") {
+        try {
+          el.showPicker();
+        } catch (_) {
+          if (typeof el.focus === "function") el.focus();
+        }
+      } else if (typeof el.focus === "function") {
+        el.focus();
+      }
+    }
+  };
 
   const load = useCallback(async (d: string) => {
     setLoading(true);
@@ -166,7 +182,7 @@ export default function OrdersPage() {
     );
   }
 
-  const displayDate = format(new Date(date + "T00:00:00"), "EEEE, d MMMM yyyy");
+  const displayDate = format(new Date(date + "T00:00:00"), "EEE, d MMM yyyy");
   const headerDate = format(new Date(date + "T00:00:00"), "EEEE • LLL d, yyyy");
   const isTodaySelected = date === format(new Date(), "yyyy-MM-dd");
 
@@ -226,7 +242,7 @@ export default function OrdersPage() {
             <div>
               <div className="text-xl font-bold text-[var(--text)] leading-tight">{stats.customers}</div>
               <div className="text-[10px] font-semibold text-[var(--text-muted)]">Customers</div>
-              <div className="text-[9px] text-[var(--text-muted)] mt-0.5">Unique customers</div>
+              <div className="text-[9px] text-[var(--text-muted)] mt-0.5">People who ordered</div>
             </div>
           </Card>
 
@@ -254,30 +270,46 @@ export default function OrdersPage() {
         </div>
 
         {/* 2. Date Picker (Wide Card) */}
-        <Card variant="flat" padding="none" className="flex items-center justify-between px-3 py-2 bg-[var(--surface)] border border-[var(--border)]">
-          <button onClick={prevDay}
-            className="w-8 h-8 flex items-center justify-center rounded-[var(--radius-sm)] hover:bg-[var(--surface-2)] border-0 cursor-pointer text-[var(--text-muted)]"
-            style={{ background: "transparent" }}>
-            <ChevronLeft size={16} />
+        <Card variant="flat" padding="none" className="flex items-center justify-between px-2 py-1.5 bg-[var(--surface)] border border-[var(--border)] min-h-[44px]">
+          <button 
+            type="button"
+            onClick={prevDay}
+            className="w-9 h-9 flex items-center justify-center rounded-[var(--radius-md)] hover:bg-[var(--surface-2)] active:bg-[var(--surface-2)] border-0 cursor-pointer text-[var(--text-muted)] hover:text-[var(--text)] transition-colors shrink-0 focus:outline-none"
+            style={{ background: "transparent" }}
+            aria-label="Previous day"
+          >
+            <ChevronLeft size={18} />
           </button>
           
-          {/* Tapping the label opens the native date picker (invisible input overlay). */}
-          <label className="relative flex items-center gap-2 text-xs font-semibold text-[var(--text)] select-none cursor-pointer">
-            <Calendar size={14} className="text-[var(--text-muted)]" />
-            <span>{isTodaySelected ? "Today, " : ""}{displayDate}</span>
+          <button
+            type="button"
+            onClick={openDatePicker}
+            className="relative flex-1 flex items-center justify-center gap-2 py-1.5 px-3 rounded-[var(--radius-md)] hover:bg-[var(--surface-2)] active:bg-[var(--surface-2)] transition-colors cursor-pointer text-center select-none border-0 focus:outline-none"
+            style={{ background: "transparent" }}
+          >
+            <Calendar size={16} className="text-[var(--color-primary)] shrink-0" />
+            <span className="text-xs sm:text-sm font-bold text-[var(--text)] whitespace-nowrap">
+              {isTodaySelected ? "Today, " : ""}{displayDate}
+            </span>
             <input
+              ref={dateInputRef}
               type="date"
               value={date}
               onChange={e => e.target.value && setDate(e.target.value)}
               aria-label="Pick a date"
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              className="sr-only"
+              style={{ position: "absolute", opacity: 0, width: 0, height: 0, pointerEvents: "none" }}
             />
-          </label>
+          </button>
 
-          <button onClick={nextDay}
-            className="w-8 h-8 flex items-center justify-center rounded-[var(--radius-sm)] hover:bg-[var(--surface-2)] border-0 cursor-pointer text-[var(--text-muted)]"
-            style={{ background: "transparent" }}>
-            <ChevronRight size={16} />
+          <button 
+            type="button"
+            onClick={nextDay}
+            className="w-9 h-9 flex items-center justify-center rounded-[var(--radius-md)] hover:bg-[var(--surface-2)] active:bg-[var(--surface-2)] border-0 cursor-pointer text-[var(--text-muted)] hover:text-[var(--text)] transition-colors shrink-0 focus:outline-none"
+            style={{ background: "transparent" }}
+            aria-label="Next day"
+          >
+            <ChevronRight size={18} />
           </button>
         </Card>
 

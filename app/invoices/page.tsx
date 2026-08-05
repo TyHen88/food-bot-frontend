@@ -46,26 +46,65 @@ function khr(amount?: number | null): string | null {
 const PAGE_SIZE = 15;
 
 export default function InvoicesPage() {
-  const { isAdmin, loading: authLoading } = useAuth();
+  const { user, profile, isAdmin, loading: authLoading } = useAuth();
   const { toast } = useToast();
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
+  const [invoiceDetailsMap, setInvoiceDetailsMap] = useState<Record<string, any[]>>({});
   const [loading, setLoading] = useState(true);
   const [viewId, setViewId] = useState<string | null>(null);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
 
-  // order_date is "yyyy-MM-dd", so plain string comparison sorts correctly.
-  const [scopeFilter, setScopeFilter] = useState<"all" | "mine">("all");
+
+  const myUserId = useMemo(() => {
+    return String(user?.id || profile?.user_id || "").trim();
+  }, [user?.id, profile?.user_id]);
+
+  const normName = useCallback((str?: any): string => {
+    if (!str) return "";
+    return String(str).toLowerCase().replace(/[\s\u200B-\u200D\uFEFF]+/g, " ").trim();
+  }, []);
+
+  const myNames = useMemo(() => {
+    const set = new Set<string>();
+    if ((profile as any)?.name) set.add(normName((profile as any).name));
+    if (profile?.username) set.add(normName(profile.username));
+    if (profile?.full_name) set.add(normName(profile.full_name));
+    if (user?.username) set.add(normName(user.username));
+    if (user?.first_name) set.add(normName(user.first_name));
+    if (user?.last_name) set.add(normName(user.last_name));
+    const combined = [user?.first_name, user?.last_name].filter(Boolean).join(" ");
+    if (combined) set.add(normName(combined));
+    return set;
+  }, [profile, user, normName]);
+
+  const isMyIdentity = useCallback((userId?: any, userName?: any): boolean => {
+    const uidStr = String(userId || "").trim();
+    if (uidStr) {
+      return Boolean(myUserId) && uidStr === myUserId;
+    }
+    const nameStr = normName(userName);
+    if (!nameStr) return false;
+    return myNames.has(nameStr);
+  }, [myUserId, myNames, normName]);
+
+  const getMyAmount = useCallback((inv: InvoiceRow): number => {
+    const details = invoiceDetailsMap[inv.invoice_id];
+    if (details) {
+      const myDetail = details.find((d) => isMyIdentity(d.user_id, d.user_name));
+      if (myDetail) return myDetail.subtotal;
+    }
+    return inv.my_amount ?? 0;
+  }, [invoiceDetailsMap, isMyIdentity]);
 
   // order_date is "yyyy-MM-dd", so plain string comparison sorts correctly.
   const visibleInvoices = useMemo(
     () => invoices.filter(inv => {
       if (fromDate && inv.order_date < fromDate) return false;
       if (toDate && inv.order_date > toDate) return false;
-      if (scopeFilter === "mine" && (!inv.my_amount || inv.my_amount <= 0)) return false;
       return true;
     }),
-    [invoices, fromDate, toDate, scopeFilter]
+    [invoices, fromDate, toDate]
   );
 
   // Riel totals sum the per-invoice riel amounts rather than converting the
@@ -74,14 +113,12 @@ export default function InvoicesPage() {
   const stats = useMemo(() => ({
     orders: visibleInvoices.length,
     amount: visibleInvoices.reduce((s, inv) => s + (inv.total ?? 0), 0),
-    mine: visibleInvoices.reduce((s, inv) => s + (inv.my_amount ?? 0), 0),
     amountKhr: visibleInvoices.reduce((s, inv) => s + (inv.total_khr ?? 0), 0),
-    mineKhr: visibleInvoices.reduce((s, inv) => s + (inv.my_amount_khr ?? 0), 0),
   }), [visibleInvoices]);
 
   // Pagination state & Infinite Scroll
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  useEffect(() => { setVisibleCount(PAGE_SIZE); }, [fromDate, toDate, scopeFilter]);
+  useEffect(() => { setVisibleCount(PAGE_SIZE); }, [fromDate, toDate]);
   const shownInvoices = visibleInvoices.slice(0, visibleCount);
 
   const observerTarget = useRef<HTMLDivElement | null>(null);
@@ -104,7 +141,21 @@ export default function InvoicesPage() {
     setLoading(true);
     try {
       const data = await api.get<InvoiceRow[]>(`/invoices${chatIdQuery(true)}`);
-      setInvoices(data ?? []);
+      const fetchedInvoices = data ?? [];
+      setInvoices(fetchedInvoices);
+
+      const detailsMap: Record<string, any[]> = {};
+      await Promise.all(
+        fetchedInvoices.slice(0, 100).map(async (inv) => {
+          try {
+            const detail = await api.get<{ details?: any[] }>(`/invoices/${inv.invoice_id}`);
+            if (detail?.details) {
+              detailsMap[inv.invoice_id] = detail.details;
+            }
+          } catch (_) {}
+        })
+      );
+      setInvoiceDetailsMap(detailsMap);
     } catch (e: unknown) {
       toast((e as Error).message, "error");
     } finally {
@@ -125,7 +176,7 @@ export default function InvoicesPage() {
         <DesktopHeader title="Invoices" subtitle="Sent order invoices" />
 
         {/* Count cards — reflect the current date range */}
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 mb-4">
+        <div className="grid grid-cols-2 gap-2 sm:gap-3 mb-4">
           <Card variant="default" padding="sm" className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300">
               <ShoppingBag size={15} />
@@ -151,47 +202,10 @@ export default function InvoicesPage() {
               </div>
             </div>
           </Card>
-
-          <Card variant="default" padding="sm" className="col-span-2 lg:col-span-1 flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300">
-              <User size={15} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-base sm:text-xl font-bold leading-tight truncate font-mono" style={{ color: "var(--color-primary)" }}>
-                {loading ? "…" : `$${stats.mine.toFixed(2)}`}
-              </div>
-              <div className="text-[10px] sm:text-xs font-semibold truncate" style={{ color: "var(--text-muted)" }}>
-                My Amount{!loading && stats.mineKhr > 0 && ` · ${khr(stats.mineKhr)}`}
-              </div>
-            </div>
-          </Card>
         </div>
 
-        {/* Date-range filter & Scope Toggle */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 mb-4">
-          <div className="flex items-center gap-1.5 bg-[var(--surface-2)] p-1 rounded-[var(--radius-md)] border border-[var(--border)] self-start">
-            <button
-              onClick={() => setScopeFilter("all")}
-              className={`px-2.5 py-1 text-xs font-semibold rounded-[var(--radius-sm)] transition-all cursor-pointer ${
-                scopeFilter === "all"
-                  ? "bg-[var(--surface)] text-[var(--text)] shadow-sm font-bold"
-                  : "text-[var(--text-muted)] hover:text-[var(--text)]"
-              }`}
-            >
-              All Invoices
-            </button>
-            <button
-              onClick={() => setScopeFilter("mine")}
-              className={`px-2.5 py-1 text-xs font-semibold rounded-[var(--radius-sm)] transition-all cursor-pointer ${
-                scopeFilter === "mine"
-                  ? "bg-[var(--color-primary)] text-white shadow-sm font-bold"
-                  : "text-[var(--text-muted)] hover:text-[var(--text)]"
-              }`}
-            >
-              My Invoices Only
-            </button>
-          </div>
-
+        {/* Date-range filter */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-end gap-2.5 mb-4">
           <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 w-full sm:w-auto">
             <div className="relative">
               <Calendar size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--text-muted)] z-10" />
@@ -232,7 +246,7 @@ export default function InvoicesPage() {
             </div>
           </Card>
         ) : visibleInvoices.length === 0 ? (
-          (fromDate || toDate || scopeFilter === "mine") ? (
+          (fromDate || toDate) ? (
             <EmptyState
               icon={<Receipt size={40} />}
               title="No invoices found"
@@ -268,9 +282,9 @@ export default function InvoicesPage() {
                       {inv.sent_count > 1 && (
                         <Badge variant="default" className="text-[10px] shrink-0">×{inv.sent_count}</Badge>
                       )}
-                      {inv.my_amount && inv.my_amount > 0 ? (
+                      {getMyAmount(inv) > 0 ? (
                         <Badge variant="admin" className="text-[10px] shrink-0 font-bold">
-                          My Share: ${inv.my_amount.toFixed(2)}
+                          My Share: ${getMyAmount(inv).toFixed(2)}
                         </Badge>
                       ) : (
                         <Badge variant="default" className="text-[10px] shrink-0">
