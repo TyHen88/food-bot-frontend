@@ -239,9 +239,38 @@ body {
    16px, even with maximum-scale=1 on some versions. Force 16px on touch
    viewports so focusing an input never zooms the page. */
 @media (max-width: 767px) {
-  input,
+  input:not([type="checkbox"]):not([type="radio"]),
   select,
   textarea {
     font-size: 16px !important;
   }
+}
+
+/* ── Mobile & Cross-browser Date Input Fixes ───────────────────────────── */
+input[type="date"] {
+  min-height: 38px;
+  line-height: 1.2;
+  color-scheme: light dark;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-color: var(--surface);
+  color: var(--text);
+  position: relative;
+}
+
+input[type="date"]::-webkit-date-and-time-value {
+  text-align: left;
+  min-height: 1.4em;
+}
+
+/* Hide duplicate native indicator, stretch transparent trigger over entire field */
+input[type="date"]::-webkit-calendar-picker-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
 }

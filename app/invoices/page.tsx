@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { Receipt, ChevronRight, ChevronDown, Calendar, X, ShoppingBag, Wallet, User } from "lucide-react";
 import { api } from "@/lib/api";
 import { chatIdQuery } from "@/lib/telegram";
@@ -79,11 +79,26 @@ export default function InvoicesPage() {
     mineKhr: visibleInvoices.reduce((s, inv) => s + (inv.my_amount_khr ?? 0), 0),
   }), [visibleInvoices]);
 
-  // Pagination is render-only: the cards above always cover the whole
-  // filtered range. Picking a new range starts back at the first page.
+  // Pagination state & Infinite Scroll
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   useEffect(() => { setVisibleCount(PAGE_SIZE); }, [fromDate, toDate, scopeFilter]);
   const shownInvoices = visibleInvoices.slice(0, visibleCount);
+
+  const observerTarget = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const target = observerTarget.current;
+    if (!target) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && visibleInvoices.length > visibleCount) {
+          setVisibleCount((prev) => prev + PAGE_SIZE);
+        }
+      },
+      { threshold: 0.1 }
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [visibleInvoices.length, visibleCount]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -110,16 +125,16 @@ export default function InvoicesPage() {
         <DesktopHeader title="Invoices" subtitle="Sent order invoices" />
 
         {/* Count cards — reflect the current date range */}
-        <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-4">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 mb-4">
           <Card variant="default" padding="sm" className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300">
               <ShoppingBag size={15} />
             </div>
-            <div className="min-w-0">
-              <div className="text-sm sm:text-xl font-bold leading-tight truncate" style={{ color: "var(--text)" }}>
+            <div className="min-w-0 flex-1">
+              <div className="text-base sm:text-xl font-bold leading-tight truncate" style={{ color: "var(--text)" }}>
                 {loading ? "…" : stats.orders}
               </div>
-              <div className="text-[10px] font-semibold" style={{ color: "var(--text-muted)" }}>Total Orders</div>
+              <div className="text-[10px] sm:text-xs font-semibold truncate" style={{ color: "var(--text-muted)" }}>Total Orders</div>
             </div>
           </Card>
 
@@ -127,25 +142,25 @@ export default function InvoicesPage() {
             <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-purple-100 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300">
               <Wallet size={15} />
             </div>
-            <div className="min-w-0">
-              <div className="text-sm sm:text-xl font-bold leading-tight truncate font-mono" style={{ color: "var(--text)" }}>
+            <div className="min-w-0 flex-1">
+              <div className="text-base sm:text-xl font-bold leading-tight truncate font-mono" style={{ color: "var(--text)" }}>
                 {loading ? "…" : `$${stats.amount.toFixed(2)}`}
               </div>
-              <div className="text-[10px] font-semibold" style={{ color: "var(--text-muted)" }}>
+              <div className="text-[10px] sm:text-xs font-semibold truncate" style={{ color: "var(--text-muted)" }}>
                 Total Amount{!loading && stats.amountKhr > 0 && ` · ${khr(stats.amountKhr)}`}
               </div>
             </div>
           </Card>
 
-          <Card variant="default" padding="sm" className="flex items-center gap-2.5">
+          <Card variant="default" padding="sm" className="col-span-2 lg:col-span-1 flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300">
               <User size={15} />
             </div>
-            <div className="min-w-0">
-              <div className="text-sm sm:text-xl font-bold leading-tight truncate font-mono" style={{ color: "var(--color-primary)" }}>
+            <div className="min-w-0 flex-1">
+              <div className="text-base sm:text-xl font-bold leading-tight truncate font-mono" style={{ color: "var(--color-primary)" }}>
                 {loading ? "…" : `$${stats.mine.toFixed(2)}`}
               </div>
-              <div className="text-[10px] font-semibold" style={{ color: "var(--text-muted)" }}>
+              <div className="text-[10px] sm:text-xs font-semibold truncate" style={{ color: "var(--text-muted)" }}>
                 My Amount{!loading && stats.mineKhr > 0 && ` · ${khr(stats.mineKhr)}`}
               </div>
             </div>
@@ -153,8 +168,8 @@ export default function InvoicesPage() {
         </div>
 
         {/* Date-range filter & Scope Toggle */}
-        <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
-          <div className="flex items-center gap-1.5 bg-[var(--surface-2)] p-1 rounded-[var(--radius-md)] border border-[var(--border)]">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 mb-4">
+          <div className="flex items-center gap-1.5 bg-[var(--surface-2)] p-1 rounded-[var(--radius-md)] border border-[var(--border)] self-start">
             <button
               onClick={() => setScopeFilter("all")}
               className={`px-2.5 py-1 text-xs font-semibold rounded-[var(--radius-sm)] transition-all cursor-pointer ${
@@ -177,34 +192,31 @@ export default function InvoicesPage() {
             </button>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="relative flex-1 min-w-[128px] sm:max-w-[160px]">
-              <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
+          <div className="grid grid-cols-2 sm:flex sm:items-center gap-2 w-full sm:w-auto">
+            <div className="relative">
+              <Calendar size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--text-muted)] z-10" />
               <input
                 type="date"
                 value={fromDate}
                 onChange={e => setFromDate(e.target.value)}
                 aria-label="From date"
-                className="w-full pl-9 pr-2 py-1.5 text-xs font-medium rounded-[var(--radius-md)] border focus:outline-none focus:ring-1 cursor-pointer"
-                style={{ background: "var(--surface)", color: fromDate ? "var(--text)" : "var(--text-muted)", borderColor: "var(--border)" }}
+                className="w-full pl-8 pr-2 py-1.5 text-xs font-medium rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:border-[var(--color-primary)] cursor-pointer min-h-[38px] sm:w-36"
               />
             </div>
-            <span className="text-[10px] font-semibold shrink-0" style={{ color: "var(--text-muted)" }}>to</span>
-            <div className="relative flex-1 min-w-[128px] sm:max-w-[160px]">
-              <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--text-muted)" }} />
+            <div className="relative">
+              <Calendar size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--text-muted)] z-10" />
               <input
                 type="date"
                 value={toDate}
                 onChange={e => setToDate(e.target.value)}
                 aria-label="To date"
-                className="w-full pl-9 pr-2 py-1.5 text-xs font-medium rounded-[var(--radius-md)] border focus:outline-none focus:ring-1 cursor-pointer"
-                style={{ background: "var(--surface)", color: toDate ? "var(--text)" : "var(--text-muted)", borderColor: "var(--border)" }}
+                className="w-full pl-8 pr-2 py-1.5 text-xs font-medium rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:border-[var(--color-primary)] cursor-pointer min-h-[38px] sm:w-36"
               />
             </div>
             {(fromDate || toDate) && (
               <button
                 onClick={() => { setFromDate(""); setToDate(""); }}
-                className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-[var(--radius-md)] border cursor-pointer hover:bg-[var(--surface-2)]"
+                className="col-span-2 sm:col-span-1 flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-[var(--radius-md)] border cursor-pointer hover:bg-[var(--surface-2)] shrink-0 min-h-[38px]"
                 style={{ background: "var(--surface)", color: "var(--text-muted)", borderColor: "var(--border)" }}
               >
                 <X size={13} /> Clear

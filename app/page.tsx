@@ -5,7 +5,7 @@ import Link from "next/link";
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isToday, getDay } from "date-fns";
 import {
   ChevronLeft, ChevronRight, ShoppingBag, BarChart3, CalendarDays,
-  BookTemplate, CalendarClock, Settings, History, Sparkles,
+  BookTemplate, CalendarClock, Settings, History, Sparkles, Coins,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { chatIdQuery } from "@/lib/telegram";
@@ -39,6 +39,7 @@ export default function DashboardPage() {
   const { toast } = useToast();
   const [month, setMonth] = useState(() => new Date());
   const [orders, setOrders] = useState<Order[]>([]);
+  const [rateData, setRateData] = useState<{ usd_khr?: number; display?: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
 
@@ -48,8 +49,12 @@ export default function DashboardPage() {
     try {
       const from = format(startOfMonth(m), "yyyy-MM-dd");
       const to   = format(endOfMonth(m),   "yyyy-MM-dd");
-      const data = await api.get<Order[]>(`/orders?from=${from}&to=${to}${chatIdQuery()}`);
+      const [data, rateRes] = await Promise.all([
+        api.get<Order[]>(`/orders?from=${from}&to=${to}${chatIdQuery()}`).catch(() => []),
+        api.get<{ usd_khr?: number; display?: string }>(`/exchange-rate${chatIdQuery()}`).catch(() => null),
+      ]);
       setOrders(Array.isArray(data) ? data : []);
+      if (rateRes) setRateData(rateRes);
     } catch (e: unknown) {
       toast((e as Error).message, "error");
       setOrders([]);
@@ -99,14 +104,26 @@ export default function DashboardPage() {
         />
 
         {/* Stats */}
-        <div className="stats-grid mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 mb-6">
           {loading ? (
-            <><Skeleton className="h-20" /><Skeleton className="h-20" /><Skeleton className="h-20" /></>
+            <>
+              <Skeleton className="h-20" />
+              <Skeleton className="h-20" />
+              <Skeleton className="h-20" />
+              <Skeleton className="h-20" />
+            </>
           ) : (
             <>
-              <StatCard icon={<ShoppingBag size={18} />}  value={totalItems}  label="Items ordered"   color="primary" />
-              <StatCard icon={<BarChart3 size={18} />}    value={uniquePolls} label="Polls this month" color="accent" />
-              <StatCard icon={<CalendarDays size={18} />} value={activeDays}  label="Active days"      color="success" />
+              <StatCard icon={<ShoppingBag size={18} />}  value={totalItems}  label="Items ordered"   color="primary" padding="sm" />
+              <StatCard icon={<BarChart3 size={18} />}    value={uniquePolls} label="Polls this month" color="accent"  padding="sm" />
+              <StatCard icon={<CalendarDays size={18} />} value={activeDays}  label="Active days"      color="success" padding="sm" />
+              <StatCard 
+                icon={<Coins size={18} />}        
+                value={rateData?.usd_khr ? `${rateData.usd_khr.toLocaleString()} ៛ / $` : "4,053 ៛ / $"} 
+                label="Exchange Rate" 
+                color="warning"
+                padding="sm"
+              />
             </>
           )}
         </div>

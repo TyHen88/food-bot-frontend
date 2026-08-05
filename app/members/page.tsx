@@ -10,7 +10,8 @@ import {
   Phone, 
   Calendar,
   SlidersHorizontal,
-  MoreHorizontal
+  MoreHorizontal,
+  Wallet
 } from "lucide-react";
 import { formatDistanceToNow, parseISO } from "date-fns";
 import { api } from "@/lib/api";
@@ -22,6 +23,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { MemberSpendModal } from "@/components/members/MemberSpendModal";
 
 interface Member {
   user_id: string;
@@ -63,6 +65,7 @@ export default function MembersPage() {
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedMember, setSelectedMember] = useState<Member | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -262,16 +265,22 @@ export default function MembersPage() {
                     </div>
 
                     {/* Actions / Info */}
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
                       {m.phone && (
                         <div className="hidden sm:flex items-center gap-1 text-[10px] text-[var(--text-muted)] font-semibold bg-[var(--surface-2)] px-2 py-1 rounded-[var(--radius-sm)]">
                           <Phone size={10} />
                           <span>{m.phone}</span>
                         </div>
                       )}
-                      <button className="p-1.5 rounded hover:bg-black/5 dark:hover:bg-white/5 border-0 text-[var(--text-muted)] cursor-pointer">
-                        <MoreHorizontal size={14} />
-                      </button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => setSelectedMember(m)}
+                        className="gap-1 text-[11px] px-2.5 py-1"
+                      >
+                        <Wallet size={12} className="text-[var(--color-primary)]" />
+                        <span>View</span>
+                      </Button>
                     </div>
                   </div>
                 );
@@ -280,6 +289,12 @@ export default function MembersPage() {
           </Card>
         )}
       </main>
+
+      <MemberSpendModal
+        member={selectedMember}
+        open={!!selectedMember}
+        onClose={() => setSelectedMember(null)}
+      />
     </>
   );
 }

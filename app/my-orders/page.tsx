@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { format, startOfWeek, startOfMonth } from "date-fns";
 import { 
   ShoppingBag, 
@@ -10,7 +10,8 @@ import {
   Search,
   Utensils,
   CreditCard,
-  ChevronDown
+  ChevronDown,
+  Calendar
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { chatIdQuery } from "@/lib/telegram";
@@ -200,10 +201,26 @@ export default function MyOrdersPage() {
       .filter((ord) => ord.myItems.length > 0);
   }, [orders, fromDate, toDate, searchQuery, isMyItem]);
 
-  // Pagination state
+  // Pagination state & Infinite Scroll
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   useEffect(() => { setVisibleCount(PAGE_SIZE); }, [fromDate, toDate, searchQuery, quickFilter]);
   const shownOrders = useMemo(() => myFilteredOrders.slice(0, visibleCount), [myFilteredOrders, visibleCount]);
+
+  const observerTarget = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const target = observerTarget.current;
+    if (!target) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && myFilteredOrders.length > visibleCount) {
+          setVisibleCount((prev) => prev + PAGE_SIZE);
+        }
+      },
+      { threshold: 0.1 }
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [myFilteredOrders.length, visibleCount]);
 
   // Invoice map for quick lookup
   const invoiceMapByOrderId = useMemo(() => {
@@ -320,7 +337,8 @@ export default function MyOrdersPage() {
                 className="w-full pl-8 pr-3 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:border-[var(--color-primary)]"
               />
             </div>
-            <div>
+            <div className="relative">
+              <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--text-muted)] z-10" />
               <input
                 type="date"
                 value={fromDate}
@@ -328,10 +346,11 @@ export default function MyOrdersPage() {
                   setFromDate(e.target.value);
                   setQuickFilter("custom");
                 }}
-                className="w-full px-3 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:border-[var(--color-primary)]"
+                className="w-full pl-9 pr-3 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:border-[var(--color-primary)] cursor-pointer min-h-[38px]"
               />
             </div>
-            <div>
+            <div className="relative">
+              <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--text-muted)] z-10" />
               <input
                 type="date"
                 value={toDate}
@@ -339,7 +358,7 @@ export default function MyOrdersPage() {
                   setToDate(e.target.value);
                   setQuickFilter("custom");
                 }}
-                className="w-full px-3 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:border-[var(--color-primary)]"
+                className="w-full pl-9 pr-3 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:border-[var(--color-primary)] cursor-pointer min-h-[38px]"
               />
             </div>
           </div>
@@ -525,14 +544,16 @@ export default function MyOrdersPage() {
               })}
 
               {myFilteredOrders.length > visibleCount && (
-                <button
-                  onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
-                  className="w-full flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold rounded-[var(--radius-md)] border cursor-pointer hover:bg-[var(--surface-2)] transition-colors"
-                  style={{ background: "var(--surface)", color: "var(--text-2)", borderColor: "var(--border)" }}
-                >
-                  <ChevronDown size={14} />
-                  Load more ({myFilteredOrders.length - visibleCount} remaining)
-                </button>
+                <div ref={observerTarget} className="pt-1">
+                  <button
+                    onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
+                    className="w-full flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold rounded-[var(--radius-md)] border cursor-pointer hover:bg-[var(--surface-2)] transition-colors"
+                    style={{ background: "var(--surface)", color: "var(--text-2)", borderColor: "var(--border)" }}
+                  >
+                    <ChevronDown size={14} className="animate-bounce" />
+                    Scroll to load more ({myFilteredOrders.length - visibleCount} remaining)
+                  </button>
+                </div>
               )}
             </>
           )}
