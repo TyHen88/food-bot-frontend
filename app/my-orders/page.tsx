@@ -416,10 +416,10 @@ export default function MyOrdersPage() {
                 const invDetails = invoiceDetailsMap[ord.order_id];
 
                 // Calculate order subtotal for my items
+                const myDetail = invDetails ? invDetails.find((d) => isMyIdentity(d.user_id, d.user_name)) : null;
                 let myOrderSubtotal = 0;
-                if (invDetails) {
-                  const myDetail = invDetails.find((d) => isMyIdentity(d.user_id, d.user_name));
-                  if (myDetail) myOrderSubtotal = myDetail.subtotal;
+                if (myDetail) {
+                  myOrderSubtotal = myDetail.subtotal;
                 } else if (inv?.my_amount) {
                   myOrderSubtotal = inv.my_amount;
                 }
@@ -448,11 +448,21 @@ export default function MyOrdersPage() {
 
                       <div className="flex items-center gap-2">
                         <Badge variant="admin" className="text-xs font-semibold px-2 py-0.5">
-                          Paid by {payer}
+                          Payer: {payer}
                         </Badge>
-                        {ord.has_invoice && (
-                          <Badge variant="success" className="text-[10px]">
-                            Invoiced
+                        {ord.has_invoice ? (
+                          (myDetail as any)?.paid || (inv as any)?.my_paid ? (
+                            <Badge variant="success" className="text-[10px]">
+                              ✓ Paid
+                            </Badge>
+                          ) : (
+                            <Badge variant="danger" className="text-[10px]">
+                              Unpaid
+                            </Badge>
+                          )
+                        ) : (
+                          <Badge variant="default" className="text-[10px]">
+                            Pending Invoice
                           </Badge>
                         )}
                       </div>

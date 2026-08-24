@@ -30,6 +30,7 @@ interface Member {
   name?: string;
   full_name?: string;
   username?: string;
+  bank_name?: string;
   phone?: string;
   role: string;      // "Admin" | "Member"
   status: string;    // "Active" | "Inactive"
@@ -261,6 +262,11 @@ export default function MembersPage() {
                             <> · Active {formatDistanceToNow(parseISO(m.last_active_at), { addSuffix: true })}</>
                           )}
                         </p>
+                        {m.bank_name && (
+                          <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold mt-0.5 truncate">
+                            🏦 ABA: {m.bank_name}
+                          </p>
+                        )}
                       </div>
                     </div>
 

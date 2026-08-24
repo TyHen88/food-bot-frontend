@@ -19,9 +19,13 @@ export interface InvoiceItem {
 }
 
 export interface InvoiceDetailEntry {
+  user_id?: string;
   user_name: string;
   items: InvoiceItem[];
   subtotal: number;
+  paid?: boolean;
+  paid_at?: string;
+  paid_amount?: number;
 }
 
 export interface Invoice {
@@ -100,7 +104,7 @@ export function InvoiceViewModal({
         `invoice_${invoice.order_date}_${invoice.order_id.slice(-6)}.pdf`,
       );
     } catch (e: unknown) {
-      toast((e as Error).message || "PDF generation failed", "error");
+      toast((e as Error).message, "error");
     } finally {
       setDownloading(false);
     }
@@ -110,13 +114,19 @@ export function InvoiceViewModal({
     <Modal
       open={open}
       onClose={onClose}
-      title="🧾 Invoice"
+      title="Invoice Breakdown"
       maxWidth="480px"
       footer={
         <>
           {isAdmin && (
-            <Button variant="secondary" size="sm" loading={resending} onClick={resend} className="mr-auto">
-              <Send size={13} /> Resend
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={resending}
+              onClick={resend}
+              className="gap-1.5"
+            >
+              <Send size={14} /> Re-send
             </Button>
           )}
           <Button
@@ -125,8 +135,9 @@ export function InvoiceViewModal({
             loading={downloading}
             disabled={!invoice}
             onClick={downloadPdf}
+            className="gap-1.5"
           >
-            <Download size={13} /> PDF
+            <Download size={14} /> Download PDF
           </Button>
           <Button size="sm" onClick={onClose}>Close</Button>
         </>
@@ -156,9 +167,16 @@ export function InvoiceViewModal({
             style={{ borderColor: "var(--border)" }}>
             {invoice.details.map((d, i) => (
               <div key={i} className="px-3 py-2" style={{ background: "var(--surface)" }}>
-                <p className="text-xs font-bold mb-1" style={{ color: "var(--text)" }}>
-                  ▪️ {d.user_name}
-                </p>
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <p className="text-xs font-bold" style={{ color: "var(--text)" }}>
+                    ▪️ {d.user_name}
+                  </p>
+                  {d.paid ? (
+                    <Badge variant="success" className="text-[10px] py-0 px-1.5">✓ Paid</Badge>
+                  ) : (
+                    <Badge variant="danger" className="text-[10px] py-0 px-1.5">Unpaid</Badge>
+                  )}
+                </div>
                 {(d.items ?? []).map((it, j) => (
                   <div key={j} className="flex items-center justify-between gap-2 text-xs py-0.5">
                     <span className="truncate flex-1" style={{ color: "var(--text-2)" }}>
