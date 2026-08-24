@@ -5,10 +5,11 @@ import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useToast } from "@/components/ui/Toast";
 import { api } from "@/lib/api";
 import { downloadInvoicePdf } from "@/lib/invoicePdf";
-import { Download, Send } from "lucide-react";
+import { Download, Send, Check, RotateCcw, Loader2 } from "lucide-react";
 import { InvoicePdfDocument } from "./InvoicePdfDocument";
 
 export interface InvoiceItem {
@@ -65,6 +66,11 @@ export function InvoiceViewModal({
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [updatingPersonIndex, setUpdatingPersonIndex] = useState<number | null>(null);
+  const [confirmPerson, setConfirmPerson] = useState<{
+    index: number;
+    detail: InvoiceDetailEntry;
+  } | null>(null);
   const pdfRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -77,6 +83,31 @@ export function InvoiceViewModal({
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [open, invoiceId, toast]);
+
+  async function togglePersonPaid(index: number, d: InvoiceDetailEntry) {
+    if (!invoice) return;
+    setUpdatingPersonIndex(index);
+    const newPaid = !d.paid;
+    try {
+      await api.post(`/invoices/${invoice.invoice_id}/mark-paid`, {
+        user_id: d.user_id || "",
+        user_name: d.user_name,
+        paid: newPaid,
+      });
+      setInvoice({
+        ...invoice,
+        details: invoice.details.map((item, i) =>
+          i === index ? { ...item, paid: newPaid, paid_amount: newPaid ? item.subtotal : 0 } : item
+        ),
+      });
+      toast(newPaid ? `Marked ${d.user_name} as Paid` : `Unmarked ${d.user_name}`, "success");
+      onResent?.();
+    } catch (e: unknown) {
+      toast((e as Error).message, "error");
+    } finally {
+      setUpdatingPersonIndex(null);
+    }
+  }
 
   async function resend() {
     if (!invoice) return;
@@ -171,11 +202,38 @@ export function InvoiceViewModal({
                   <p className="text-xs font-bold" style={{ color: "var(--text)" }}>
                     ▪️ {d.user_name}
                   </p>
-                  {d.paid ? (
-                    <Badge variant="success" className="text-[10px] py-0 px-1.5">✓ Paid</Badge>
-                  ) : (
-                    <Badge variant="danger" className="text-[10px] py-0 px-1.5">Unpaid</Badge>
-                  )}
+                  <div className="flex items-center gap-1.5">
+                    {d.paid ? (
+                      <Badge variant="success" className="text-[10px] py-0 px-1.5">✓ Paid</Badge>
+                    ) : (
+                      <Badge variant="danger" className="text-[10px] py-0 px-1.5">Unpaid</Badge>
+                    )}
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        disabled={updatingPersonIndex === i}
+                        onClick={() => setConfirmPerson({ index: i, detail: d })}
+                        className={`px-1.5 py-0.5 text-[9px] font-bold rounded flex items-center gap-1 cursor-pointer transition-all ${
+                          d.paid
+                            ? "bg-[var(--surface-2)] text-[var(--text-muted)] hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-[var(--border)]"
+                            : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm"
+                        }`}
+                        title={d.paid ? "Unmark as paid" : "Mark as paid"}
+                      >
+                        {updatingPersonIndex === i ? (
+                          <Loader2 size={9} className="animate-spin" />
+                        ) : d.paid ? (
+                          <>
+                            <RotateCcw size={9} /> Unmark
+                          </>
+                        ) : (
+                          <>
+                            <Check size={9} /> Mark Paid
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
                 </div>
                 {(d.items ?? []).map((it, j) => (
                   <div key={j} className="flex items-center justify-between gap-2 text-xs py-0.5">
@@ -211,20 +269,34 @@ export function InvoiceViewModal({
             </p>
           </div>
 
-          {/* Payer QR — scan to pay */}
-          {invoice.payer_qr_image && (
-            <div className="flex flex-col items-center gap-1.5 rounded-[var(--radius-md)] border px-3 py-3"
-              style={{ borderColor: "var(--border)", background: "var(--surface)" }}>
-              {/* White backing keeps the QR scannable in dark mode. */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={invoice.payer_qr_image}
-                alt={`KHQR to pay ${invoice.payer_name || "the payer"}`}
-                className="w-44 max-w-full rounded-[var(--radius-sm)] bg-white p-1.5"
-              />
-              <p className="text-[11px] font-medium m-0" style={{ color: "var(--text-muted)" }}>
-                📱 Scan to pay {invoice.payer_name || "the payer"}
-              </p>
+          {/* Payment QR / KHQR block if available */}
+          {(invoice.payer_qr_image || invoice.payer_khqr_text) && (
+            <div className="p-3 rounded-[var(--radius-md)] border flex items-center justify-between gap-3"
+              style={{ background: "var(--surface-2)", borderColor: "var(--border)" }}>
+              <div className="flex items-center gap-3">
+                {invoice.payer_qr_image ? (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img
+                    src={invoice.payer_qr_image}
+                    alt="ABA QR"
+                    className="w-12 h-12 rounded-[var(--radius-sm)] border bg-white object-contain"
+                    style={{ borderColor: "var(--border)" }}
+                  />
+                ) : (
+                  <div className="w-12 h-12 rounded-[var(--radius-sm)] border flex items-center justify-center text-xs font-bold"
+                    style={{ borderColor: "var(--border)", color: "var(--text-2)" }}>
+                    KHQR
+                  </div>
+                )}
+                <div>
+                  <p className="text-xs font-bold" style={{ color: "var(--text)" }}>
+                    Scan to Pay ({invoice.payer_name})
+                  </p>
+                  <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                    Use ABA or any Bakong-enabled app
+                  </p>
+                </div>
+              </div>
               {invoice.payer_khqr_text && (
                 <button
                   onClick={() =>
@@ -236,7 +308,7 @@ export function InvoiceViewModal({
                   className="text-[11px] font-semibold px-2.5 py-1 rounded-[var(--radius-sm)] border cursor-pointer hover:bg-[var(--surface-2)]"
                   style={{ background: "transparent", color: "var(--text-2)", borderColor: "var(--border)" }}
                 >
-                  Copy KHQR code
+                  Copy
                 </button>
               )}
             </div>
@@ -246,6 +318,42 @@ export function InvoiceViewModal({
           <InvoicePdfDocument ref={pdfRef} invoice={invoice} />
         </div>
       )}
+
+      {/* Confirmation: Person Payment Status Toggle */}
+      <ConfirmDialog
+        open={!!confirmPerson}
+        onClose={() => setConfirmPerson(null)}
+        onConfirm={() => {
+          if (confirmPerson) {
+            const { index, detail } = confirmPerson;
+            setConfirmPerson(null);
+            togglePersonPaid(index, detail);
+          }
+        }}
+        title={confirmPerson?.detail.paid ? "Confirm Unmark Payment" : "Confirm Mark as Paid"}
+        variant={confirmPerson?.detail.paid ? "danger" : "success"}
+        confirmText={confirmPerson?.detail.paid ? "Yes, Unmark" : "Yes, Mark Paid"}
+        message={
+          <div>
+            <p className="font-semibold text-[var(--text)]">
+              {confirmPerson?.detail.paid ? (
+                <>
+                  Unmark <span className="font-bold">{confirmPerson.detail.user_name}</span> as unpaid for this invoice?
+                </>
+              ) : (
+                <>
+                  Mark <span className="font-bold">{confirmPerson?.detail.user_name}</span> as <span className="text-emerald-600 dark:text-emerald-400 font-bold">PAID</span>?
+                </>
+              )}
+            </p>
+            {confirmPerson && (
+              <p className="text-[11px] text-[var(--text-muted)] mt-1">
+                Amount: <strong className="text-[var(--text)]">${(confirmPerson.detail.subtotal ?? 0).toFixed(2)}</strong>.
+              </p>
+            )}
+          </div>
+        }
+      />
     </Modal>
   );
 }

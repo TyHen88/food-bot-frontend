@@ -11,7 +11,10 @@ import {
   Calendar,
   SlidersHorizontal,
   MoreHorizontal,
-  Wallet
+  Wallet,
+  Check,
+  Zap,
+  Loader2
 } from "lucide-react";
 import { formatDistanceToNow, parseISO } from "date-fns";
 import { api } from "@/lib/api";
@@ -23,6 +26,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { MemberSpendModal } from "@/components/members/MemberSpendModal";
 
 interface Member {
@@ -35,6 +39,10 @@ interface Member {
   role: string;      // "Admin" | "Member"
   status: string;    // "Active" | "Inactive"
   last_active_at?: string;
+  unpaid_debt?: number;
+  total_spend?: number;
+  paid_spend?: number;
+  unpaid_invoices_count?: number;
 }
 
 const AVATAR_COLORS = [
@@ -86,12 +94,15 @@ export default function MembersPage() {
     load();
   }, [load, authLoading]);
 
+  const { isAdmin } = useAuth();
+
   // 1. Stats Calculations
   const stats = useMemo(() => {
     const total = members.length;
     const admins = members.filter(m => m.role?.toLowerCase() === "admin").length;
     const active = members.filter(m => m.status?.toLowerCase() === "active").length;
-    return { total, admins, active };
+    const totalDebt = members.reduce((acc, m) => acc + (m.unpaid_debt || 0), 0);
+    return { total, admins, active, totalDebt };
   }, [members]);
 
   // 2. Search Filter
@@ -109,6 +120,57 @@ export default function MembersPage() {
       );
     });
   }, [members, searchQuery]);
+
+  const [settlingUserId, setSettlingUserId] = useState<string | null>(null);
+  const [bulkSettling, setBulkSettling] = useState(false);
+  const [confirmMemberForSettle, setConfirmMemberForSettle] = useState<Member | null>(null);
+  const [confirmGroupSettle, setConfirmGroupSettle] = useState(false);
+
+  const handleSettleMember = async (member: Member) => {
+    setSettlingUserId(member.user_id);
+    try {
+      const res = await api.post<{ settled_invoices_count: number; settled_amount: number }>(
+        `/members/${member.user_id}/settle`,
+        {}
+      );
+      toast(
+        `Settled ${res.settled_invoices_count} orders ($${res.settled_amount.toFixed(2)}) for ${member.name || member.full_name}`,
+        "success"
+      );
+      load();
+    } catch (e: unknown) {
+      toast((e as Error).message, "error");
+    } finally {
+      setSettlingUserId(null);
+    }
+  };
+
+  const handleSettleAllGroupDebt = async () => {
+    const debtMembers = members.filter((m) => (m.unpaid_debt || 0) > 0.009);
+    if (debtMembers.length === 0) {
+      toast("No outstanding debt in group", "info");
+      return;
+    }
+    setBulkSettling(true);
+    try {
+      const res = await api.post<{
+        settled_users_count: number;
+        settled_invoices_count: number;
+        settled_amount: number;
+      }>("/members/settle-bulk", {
+        user_ids: debtMembers.map((m) => m.user_id),
+      });
+      toast(
+        `Successfully settled $${res.settled_amount.toFixed(2)} across ${res.settled_users_count} members!`,
+        "success"
+      );
+      load();
+    } catch (e: unknown) {
+      toast((e as Error).message, "error");
+    } finally {
+      setBulkSettling(false);
+    }
+  };
 
   const handleCopyUserlist = () => {
     const text = members.map(m => {
@@ -129,8 +191,20 @@ export default function MembersPage() {
       <div className="flex sm:hidden items-center justify-between px-4 py-3 bg-[var(--surface)] border-b border-[var(--border)] sticky top-0 z-10">
         <h1 className="text-base font-bold text-[var(--text)]">Members</h1>
         <div className="flex gap-2">
+          {isAdmin && stats.totalDebt > 0.009 && (
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => setConfirmGroupSettle(true)}
+              disabled={bulkSettling}
+              className="gap-1 font-bold text-[11px] px-2"
+            >
+              {bulkSettling ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />}
+              <span>Settle All</span>
+            </Button>
+          )}
           <Button size="sm" variant="secondary" onClick={handleCopyUserlist} disabled={members.length === 0}>
-            Copy List
+            Copy
           </Button>
           <Button size="sm" variant="secondary" onClick={load}>
             <RefreshCw size={13} />
@@ -148,7 +222,19 @@ export default function MembersPage() {
               Registered chat and bot participants
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            {isAdmin && stats.totalDebt > 0.009 && (
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => setConfirmGroupSettle(true)}
+                disabled={bulkSettling}
+                className="gap-1 font-bold"
+              >
+                {bulkSettling ? <Loader2 size={13} className="animate-spin" /> : <Zap size={13} />}
+                <span>⚡ Settle All Debt (${stats.totalDebt.toFixed(2)})</span>
+              </Button>
+            )}
             <Button size="sm" variant="secondary" onClick={handleCopyUserlist} disabled={members.length === 0}>
               Copy Members List
             </Button>
@@ -159,34 +245,52 @@ export default function MembersPage() {
         </div>
 
         {/* 1. Stats Grid */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <Card variant="default" padding="sm" className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full flex items-center justify-center bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300">
-              <Users size={18} />
+            <div className="w-9 h-9 rounded-full flex items-center justify-center bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 shrink-0">
+              <Users size={16} />
             </div>
-            <div>
-              <div className="text-xl font-bold text-[var(--text)] leading-tight">{stats.total}</div>
-              <div className="text-[10px] font-semibold text-[var(--text-muted)]">Total Members</div>
+            <div className="min-w-0">
+              <div className="text-lg font-bold text-[var(--text)] leading-tight">{stats.total}</div>
+              <div className="text-[10px] font-semibold text-[var(--text-muted)] truncate">Total Members</div>
             </div>
           </Card>
 
           <Card variant="default" padding="sm" className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full flex items-center justify-center bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300">
-              <Shield size={18} />
+            <div className="w-9 h-9 rounded-full flex items-center justify-center bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 shrink-0">
+              <Shield size={16} />
             </div>
-            <div>
-              <div className="text-xl font-bold text-[var(--text)] leading-tight">{stats.admins}</div>
-              <div className="text-[10px] font-semibold text-[var(--text-muted)]">Admins</div>
+            <div className="min-w-0">
+              <div className="text-lg font-bold text-[var(--text)] leading-tight">{stats.admins}</div>
+              <div className="text-[10px] font-semibold text-[var(--text-muted)] truncate">Admins</div>
             </div>
           </Card>
 
           <Card variant="default" padding="sm" className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full flex items-center justify-center bg-orange-100 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300">
-              <Activity size={18} />
+            <div className="w-9 h-9 rounded-full flex items-center justify-center bg-purple-100 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 shrink-0">
+              <Activity size={16} />
             </div>
-            <div>
-              <div className="text-xl font-bold text-[var(--text)] leading-tight">{stats.active}</div>
-              <div className="text-[10px] font-semibold text-[var(--text-muted)]">Active Users</div>
+            <div className="min-w-0">
+              <div className="text-lg font-bold text-[var(--text)] leading-tight">{stats.active}</div>
+              <div className="text-[10px] font-semibold text-[var(--text-muted)] truncate">Active Users</div>
+            </div>
+          </Card>
+
+          <Card variant="default" padding="sm" className="flex items-center gap-3">
+            <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${
+              stats.totalDebt > 0.009
+                ? "bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300"
+                : "bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300"
+            }`}>
+              <Wallet size={16} />
+            </div>
+            <div className="min-w-0">
+              <div className="text-lg font-bold text-[var(--text)] leading-tight">
+                ${stats.totalDebt.toFixed(2)}
+              </div>
+              <div className="text-[10px] font-semibold text-[var(--text-muted)] truncate">
+                {stats.totalDebt > 0.009 ? "Group Debt" : "All Settled"}
+              </div>
             </div>
           </Card>
         </div>
@@ -230,11 +334,15 @@ export default function MembersPage() {
                 const initials = getInitials(displayName);
 
                 return (
-                  <div key={m.user_id} className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-[var(--surface-2)]/50 transition-colors">
-                    <div className="flex items-center gap-3 min-w-0">
-                      {/* Avatar with Active Dot */}
-                      <div className="relative flex-shrink-0">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs ${avatarStyle.bg} ${avatarStyle.text}`}>
+                  <div 
+                    key={m.user_id}
+                    className="flex items-center justify-between p-3 sm:p-4 hover:bg-[var(--surface-2)] transition-colors gap-3"
+                  >
+                    {/* Left: Avatar + Info */}
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      {/* Avatar */}
+                      <div className="relative shrink-0">
+                        <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs ${avatarStyle.bg} ${avatarStyle.text}`}>
                           {initials}
                         </div>
                         <span 
@@ -270,8 +378,36 @@ export default function MembersPage() {
                       </div>
                     </div>
 
-                    {/* Actions / Info */}
-                    <div className="flex items-center gap-2">
+                    {/* Actions / Debt Status / Info */}
+                    <div className="flex items-center gap-2 shrink-0">
+                      {(m.unpaid_debt ?? 0) > 0.009 ? (
+                        <Badge variant="danger" className="text-[10px] font-bold whitespace-nowrap">
+                          Debt: ${(m.unpaid_debt ?? 0).toFixed(2)}
+                        </Badge>
+                      ) : (m.total_spend ?? 0) > 0 ? (
+                        <Badge variant="success" className="text-[10px] whitespace-nowrap">
+                          ✓ Settled
+                        </Badge>
+                      ) : null}
+
+                      {isAdmin && (m.unpaid_debt ?? 0) > 0.009 && (
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          onClick={() => setConfirmMemberForSettle(m)}
+                          disabled={settlingUserId === m.user_id}
+                          className="gap-1 text-[11px] px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 font-bold"
+                          title={`Mark all unpaid orders as paid for ${displayName}`}
+                        >
+                          {settlingUserId === m.user_id ? (
+                            <Loader2 size={11} className="animate-spin" />
+                          ) : (
+                            <Check size={11} />
+                          )}
+                          <span>Mark Paid</span>
+                        </Button>
+                      )}
+
                       {m.phone && (
                         <div className="hidden sm:flex items-center gap-1 text-[10px] text-[var(--text-muted)] font-semibold bg-[var(--surface-2)] px-2 py-1 rounded-[var(--radius-sm)]">
                           <Phone size={10} />
@@ -300,6 +436,57 @@ export default function MembersPage() {
         member={selectedMember}
         open={!!selectedMember}
         onClose={() => setSelectedMember(null)}
+        onUpdated={load}
+      />
+
+      {/* Confirmation: Single Member Settle */}
+      <ConfirmDialog
+        open={!!confirmMemberForSettle}
+        onClose={() => setConfirmMemberForSettle(null)}
+        onConfirm={() => {
+          if (confirmMemberForSettle) {
+            const m = confirmMemberForSettle;
+            setConfirmMemberForSettle(null);
+            handleSettleMember(m);
+          }
+        }}
+        title="Confirm Mark as Paid"
+        variant="success"
+        confirmText="Yes, Mark as Paid"
+        message={
+          <div>
+            <p className="font-semibold text-[var(--text)]">
+              Mark all unpaid lunch orders as <span className="text-emerald-600 dark:text-emerald-400 font-bold">PAID</span> for{" "}
+              <span className="font-bold">{confirmMemberForSettle?.name || confirmMemberForSettle?.full_name}</span>?
+            </p>
+            <p className="text-[11px] text-[var(--text-muted)] mt-1">
+              Total amount to settle: <strong className="text-[var(--text)]">${(confirmMemberForSettle?.unpaid_debt || 0).toFixed(2)}</strong> across {confirmMemberForSettle?.unpaid_invoices_count || 0} orders.
+            </p>
+          </div>
+        }
+      />
+
+      {/* Confirmation: All Group Debt Settle */}
+      <ConfirmDialog
+        open={confirmGroupSettle}
+        onClose={() => setConfirmGroupSettle(false)}
+        onConfirm={() => {
+          setConfirmGroupSettle(false);
+          handleSettleAllGroupDebt();
+        }}
+        title="Confirm Group Debt Settlement"
+        variant="success"
+        confirmText="Yes, Settle All Debt"
+        message={
+          <div>
+            <p className="font-semibold text-[var(--text)]">
+              Are you sure you want to mark all outstanding lunch debt across the entire group as <span className="text-emerald-600 dark:text-emerald-400 font-bold">PAID</span>?
+            </p>
+            <p className="text-[11px] text-[var(--text-muted)] mt-1">
+              Total group debt to settle: <strong className="text-[var(--text)]">${stats.totalDebt.toFixed(2)}</strong>.
+            </p>
+          </div>
+        }
       />
     </>
   );

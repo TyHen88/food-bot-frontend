@@ -66,9 +66,9 @@ export default function MyOrdersPage() {
   const [invoiceDetailsMap, setInvoiceDetailsMap] = useState<Record<string, InvoicePersonDetail[]>>({});
   const [loading, setLoading] = useState(true);
 
-  const [quickFilter, setQuickFilter] = useState<QuickFilter>("all");
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>("week");
+  const [fromDate, setFromDate] = useState(() => format(startOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd"));
+  const [toDate, setToDate] = useState(() => format(new Date(), "yyyy-MM-dd"));
 
   // Normalization helpers for user matching
   const myUserId = useMemo(() => {
