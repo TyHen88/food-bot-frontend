@@ -48,6 +48,9 @@ interface InvoicePersonDetail {
   user_name?: string;
   items: InvoiceDetailItem[];
   subtotal: number;
+  paid?: boolean;
+  paid_at?: string;
+  paid_amount?: number;
 }
 
 interface InvoiceRow {
@@ -260,6 +263,8 @@ export function MemberSpendModal({
   // Statistics & Payer breakdown calculation
   const stats = useMemo(() => {
     let totalSpend = 0;
+    let totalPaid = 0;
+    let totalUnpaid = 0;
     let totalItemsCount = 0;
     const paidToMap = new Map<string, { total: number; count: number }>();
 
@@ -268,14 +273,23 @@ export function MemberSpendModal({
       const payerName = inv?.payer_name || ord.paid_by?.username || "Unknown Payer";
 
       let orderMemberAmount = 0;
+      let orderIsPaid = false;
       const invDetails = invoiceDetailsMap[ord.order_id];
 
       if (invDetails) {
         const mDetail = invDetails.find((d) => isMemberIdentity(d.user_id, d.user_name));
-        if (mDetail) orderMemberAmount = mDetail.subtotal;
+        if (mDetail) {
+          orderMemberAmount = mDetail.subtotal;
+          orderIsPaid = Boolean(mDetail.paid);
+        }
       }
 
       totalSpend += orderMemberAmount;
+      if (orderIsPaid) {
+        totalPaid += orderMemberAmount;
+      } else if (ord.has_invoice) {
+        totalUnpaid += orderMemberAmount;
+      }
 
       const orderItemQty = ord.memberItems.reduce((acc, it) => acc + (Number(it.qty) || 1), 0);
       totalItemsCount += orderItemQty;
@@ -296,6 +310,8 @@ export function MemberSpendModal({
 
     return {
       totalSpend,
+      totalPaid,
+      totalUnpaid,
       totalOrdersCount: memberFilteredOrders.length,
       totalItemsCount,
       paidToList,
@@ -425,19 +441,26 @@ export function MemberSpendModal({
         </Card>
 
         {/* Top Summary Stat Cards */}
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           <StatCard
-            icon={<Wallet size={18} />}
+            icon={<Wallet size={16} />}
             value={`$${stats.totalSpend.toFixed(2)}`}
             label="Total Spend"
             color="primary"
             padding="sm"
           />
           <StatCard
-            icon={<Utensils size={18} />}
-            value={`${stats.totalItemsCount} items`}
-            label={`Across ${stats.totalOrdersCount} orders`}
-            color="accent"
+            icon={<CheckCircle2 size={16} />}
+            value={`$${stats.totalPaid.toFixed(2)}`}
+            label="Total Paid"
+            color="success"
+            padding="sm"
+          />
+          <StatCard
+            icon={<CreditCard size={16} />}
+            value={`$${stats.totalUnpaid.toFixed(2)}`}
+            label="Unpaid Debt"
+            color={stats.totalUnpaid > 0.009 ? "warning" : "success"}
             padding="sm"
           />
         </div>
@@ -497,14 +520,18 @@ export function MemberSpendModal({
                 const invDetails = invoiceDetailsMap[ord.order_id];
 
                 let orderSubtotal = 0;
+                let isPaid = false;
                 if (invDetails) {
                   const mDetail = invDetails.find((d) => isMemberIdentity(d.user_id, d.user_name));
-                  if (mDetail) orderSubtotal = mDetail.subtotal;
+                  if (mDetail) {
+                    orderSubtotal = mDetail.subtotal;
+                    isPaid = Boolean(mDetail.paid);
+                  }
                 }
 
                 return (
                   <Card key={ord.order_id} variant="flat" padding="sm" className="space-y-2 border border-[var(--border)]">
-                    <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] pb-1.5 text-xs">
+                    <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] pb-1.5 text-xs flex-wrap">
                       <div className="flex items-center gap-2">
                         <span className="font-bold text-[var(--color-primary)]">
                           {format(new Date(ord.order_date + "T00:00:00"), "MMM d, yyyy")}
@@ -515,9 +542,26 @@ export function MemberSpendModal({
                           </Badge>
                         )}
                       </div>
-                      <Badge variant="admin" className="text-[10px]">
-                        Paid to {payer}
-                      </Badge>
+                      <div className="flex items-center gap-1.5">
+                        <Badge variant="admin" className="text-[10px]">
+                          Payer: {payer}
+                        </Badge>
+                        {ord.has_invoice ? (
+                          isPaid ? (
+                            <Badge variant="success" className="text-[10px]">
+                              ✓ Paid
+                            </Badge>
+                          ) : (
+                            <Badge variant="danger" className="text-[10px]">
+                              Unpaid
+                            </Badge>
+                          )
+                        ) : (
+                          <Badge variant="default" className="text-[10px]">
+                            Pending Invoice
+                          </Badge>
+                        )}
+                      </div>
                     </div>
 
                     {/* Member's Dishes */}
