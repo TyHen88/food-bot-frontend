@@ -29,6 +29,13 @@ import { useToast } from "@/components/ui/Toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { api } from "@/lib/api";
 import { chatIdQuery } from "@/lib/telegram";
+import { 
+  getInvoiceFromCache, 
+  fetchInvoiceWithCache, 
+  invalidateInvoiceCache, 
+  type Invoice, 
+  type InvoiceDetailEntry 
+} from "@/lib/invoiceCache";
 import type { Order, OrderItem } from "@/components/orders/OrderItemsEditor";
 
 interface Member {
@@ -67,7 +74,8 @@ interface InvoiceRow {
   order_date: string;
   total: number;
   payer_name: string;
-  details?: InvoicePersonDetail[];
+  my_amount?: number;
+  my_paid?: boolean;
 }
 
 type QuickFilter = "today" | "week" | "month" | "all" | "custom";
@@ -111,7 +119,6 @@ export function MemberSpendModal({
   const { toast } = useToast();
   const [orders, setOrders] = useState<Order[]>([]);
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
-  const [invoiceDetailsMap, setInvoiceDetailsMap] = useState<Record<string, InvoicePersonDetail[]>>({});
   const [loading, setLoading] = useState(false);
   const [updatingPaidOrderId, setUpdatingPaidOrderId] = useState<string | null>(null);
   const [bulkUpdating, setBulkUpdating] = useState(false);
@@ -152,7 +159,7 @@ export function MemberSpendModal({
     return String(member?.user_id || "").trim();
   }, [member?.user_id]);
 
-  const normName = useCallback((str?: any): string => {
+  const normName = useCallback((str?: unknown): string => {
     if (!str) return "";
     return String(str).toLowerCase().replace(/[\s\u200B-\u200D\uFEFF]+/g, " ").trim();
   }, []);
@@ -166,7 +173,7 @@ export function MemberSpendModal({
     return set;
   }, [member, normName]);
 
-  const isMemberIdentity = useCallback((userId?: any, userName?: any): boolean => {
+  const isMemberIdentity = useCallback((userId?: unknown, userName?: unknown): boolean => {
     const uidStr = String(userId || "").trim();
     if (uidStr) {
       return Boolean(memberUserId) && uidStr === memberUserId;
@@ -181,49 +188,39 @@ export function MemberSpendModal({
   }, [isMemberIdentity]);
 
   // Load orders & invoices for member spend analysis
-  useEffect(() => {
+  const loadData = useCallback(() => {
     if (!open || !member) {
       setOrders([]);
       setInvoices([]);
-      setInvoiceDetailsMap({});
       return;
     }
-
-    // Default view to This Week whenever opened
-    setQuickFilter("week");
-    setFromDate(format(startOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd"));
-    setToDate(format(new Date(), "yyyy-MM-dd"));
 
     let cancelled = false;
     setLoading(true);
 
+    const orderParams = new URLSearchParams();
+    const invoiceParams = new URLSearchParams();
+    orderParams.set("user_id", String(member.user_id));
+
     Promise.all([
-      api.get<Order[]>(`/orders${chatIdQuery(true)}`),
-      api.get<InvoiceRow[]>(`/invoices${chatIdQuery(true)}`),
+      api.get<Order[] | { items: Order[] }>(`/orders?${orderParams.toString()}${chatIdQuery()}`),
+      api.get<InvoiceRow[] | { items: InvoiceRow[] }>(`/invoices?${invoiceParams.toString()}${chatIdQuery()}`),
     ])
-      .then(async ([ordersData, invoicesData]) => {
+      .then(([ordersData, invoicesData]) => {
         if (cancelled) return;
-        const fetchedOrders = Array.isArray(ordersData) ? ordersData : [];
-        const fetchedInvoices = Array.isArray(invoicesData) ? invoicesData : [];
+        const fetchedOrders = Array.isArray(ordersData)
+          ? ordersData
+          : ordersData && "items" in ordersData && Array.isArray(ordersData.items)
+          ? ordersData.items
+          : [];
+        const fetchedInvoices = Array.isArray(invoicesData)
+          ? invoicesData
+          : invoicesData && "items" in invoicesData && Array.isArray(invoicesData.items)
+          ? invoicesData.items
+          : [];
 
         setOrders(fetchedOrders);
         setInvoices(fetchedInvoices);
-
-        // Fetch per-person dish costs for all relevant invoices
-        const detailsMap: Record<string, InvoicePersonDetail[]> = {};
-        await Promise.all(
-          fetchedInvoices.slice(0, 100).map(async (inv) => {
-            try {
-              const detail = await api.get<{ details?: InvoicePersonDetail[] }>(`/invoices/${inv.invoice_id}`);
-              if (detail?.details) {
-                detailsMap[inv.order_id || inv.invoice_id] = detail.details;
-              }
-            } catch (_) {}
-          })
-        );
-        if (!cancelled) {
-          setInvoiceDetailsMap(detailsMap);
-        }
       })
       .catch((e: unknown) => {
         if (!cancelled) toast((e as Error).message, "error");
@@ -234,6 +231,10 @@ export function MemberSpendModal({
 
     return () => { cancelled = true; };
   }, [open, member, toast]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   // Map invoices by order_id
   const invoiceMapByOrderId = useMemo(() => {
@@ -295,16 +296,19 @@ export function MemberSpendModal({
       const inv = invoiceMapByOrderId.get(ord.order_id);
       const payerName = inv?.payer_name || ord.paid_by?.username || "Unknown Payer";
 
+      const cachedInv = getInvoiceFromCache(ord.order_id) || (inv?.invoice_id ? getInvoiceFromCache(inv.invoice_id) : undefined);
       let orderMemberAmount = 0;
       let orderIsPaid = false;
-      const invDetails = invoiceDetailsMap[ord.order_id];
 
-      if (invDetails) {
-        const mDetail = invDetails.find((d) => isMemberIdentity(d.user_id, d.user_name));
+      if (cachedInv?.details) {
+        const mDetail = cachedInv.details.find((d) => isMemberIdentity(d.user_id, d.user_name));
         if (mDetail) {
           orderMemberAmount = mDetail.subtotal;
           orderIsPaid = Boolean(mDetail.paid);
         }
+      } else if (inv?.my_amount) {
+        orderMemberAmount = inv.my_amount;
+        orderIsPaid = Boolean(inv.my_paid);
       }
 
       totalSpend += orderMemberAmount;
@@ -339,7 +343,7 @@ export function MemberSpendModal({
       totalItemsCount,
       paidToList,
     };
-  }, [memberFilteredOrders, invoiceMapByOrderId, invoiceDetailsMap, isMemberIdentity]);
+  }, [memberFilteredOrders, invoiceMapByOrderId, isMemberIdentity]);
 
   const handleToggleSinglePaid = async (orderId: string, currentPaid: boolean) => {
     if (!member) return;
@@ -353,23 +357,11 @@ export function MemberSpendModal({
         paid: !currentPaid,
       });
 
-      // Update local invoice details state optimistically
-      setInvoiceDetailsMap((prev) => {
-        const copy = { ...prev };
-        const key = copy[orderId] ? orderId : invoiceId;
-        const details = copy[key];
-        if (details) {
-          copy[key] = details.map((d) => {
-            if (isMemberIdentity(d.user_id, d.user_name)) {
-              return { ...d, paid: !currentPaid, paid_amount: !currentPaid ? d.subtotal : 0 };
-            }
-            return d;
-          });
-        }
-        return copy;
-      });
+      invalidateInvoiceCache(invoiceId);
+      invalidateInvoiceCache(orderId);
 
       toast(!currentPaid ? "Marked as Paid" : "Unmarked payment", "success");
+      loadData();
       onUpdated?.();
     } catch (e: unknown) {
       toast((e as Error).message, "error");
@@ -383,14 +375,8 @@ export function MemberSpendModal({
     const unpaidInvoiceIds: string[] = [];
     memberFilteredOrders.forEach((ord) => {
       if (!ord.has_invoice) return;
-      const invDetails = invoiceDetailsMap[ord.order_id];
-      if (invDetails) {
-        const mDetail = invDetails.find((d) => isMemberIdentity(d.user_id, d.user_name));
-        if (mDetail && !mDetail.paid) {
-          const inv = invoiceMapByOrderId.get(ord.order_id);
-          unpaidInvoiceIds.push(inv?.invoice_id || ord.order_id);
-        }
-      }
+      const inv = invoiceMapByOrderId.get(ord.order_id);
+      unpaidInvoiceIds.push(inv?.invoice_id || ord.order_id);
     });
 
     if (unpaidInvoiceIds.length === 0) {
@@ -407,23 +393,10 @@ export function MemberSpendModal({
         paid: true,
       });
 
-      // Update all local invoice details state optimistically
-      setInvoiceDetailsMap((prev) => {
-        const copy = { ...prev };
-        unpaidInvoiceIds.forEach((id) => {
-          Object.keys(copy).forEach((k) => {
-            copy[k] = copy[k].map((d) => {
-              if (isMemberIdentity(d.user_id, d.user_name)) {
-                return { ...d, paid: true, paid_amount: d.subtotal };
-              }
-              return d;
-            });
-          });
-        });
-        return copy;
-      });
+      invalidateInvoiceCache();
 
       toast(`Successfully settled ${unpaidInvoiceIds.length} orders!`, "success");
+      loadData();
       onUpdated?.();
     } catch (e: unknown) {
       toast((e as Error).message, "error");
@@ -659,16 +632,19 @@ export function MemberSpendModal({
               {shownOrders.map((ord) => {
                 const inv = invoiceMapByOrderId.get(ord.order_id);
                 const payer = inv?.payer_name || ord.paid_by?.username || "Payer";
-                const invDetails = invoiceDetailsMap[ord.order_id];
+                const cachedInv = getInvoiceFromCache(ord.order_id) || (inv?.invoice_id ? getInvoiceFromCache(inv.invoice_id) : undefined);
 
                 let orderSubtotal = 0;
                 let isPaid = false;
-                if (invDetails) {
-                  const mDetail = invDetails.find((d) => isMemberIdentity(d.user_id, d.user_name));
+                if (cachedInv?.details) {
+                  const mDetail = cachedInv.details.find((d) => isMemberIdentity(d.user_id, d.user_name));
                   if (mDetail) {
                     orderSubtotal = mDetail.subtotal;
                     isPaid = Boolean(mDetail.paid);
                   }
+                } else if (inv?.my_amount) {
+                  orderSubtotal = inv.my_amount;
+                  isPaid = Boolean(inv.my_paid);
                 }
 
                 return (
@@ -747,8 +723,8 @@ export function MemberSpendModal({
                         const qty = Number(it.qty) || 1;
 
                         let itemPrice: number | null = null;
-                        if (invDetails) {
-                          const mDetail = invDetails.find((d) => isMemberIdentity(d.user_id, d.user_name));
+                        if (cachedInv?.details) {
+                          const mDetail = cachedInv.details.find((d) => isMemberIdentity(d.user_id, d.user_name));
                           const matchedItem = mDetail?.items.find((dIt) => dIt.item_name === dishName);
                           if (matchedItem) itemPrice = matchedItem.cost;
                         }

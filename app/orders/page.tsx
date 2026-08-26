@@ -65,15 +65,15 @@ export default function OrdersPage() {
   const dateInputRef = useRef<HTMLInputElement>(null);
 
   const openDatePicker = () => {
-    const el = dateInputRef.current as any;
+    const el = dateInputRef.current;
     if (el) {
-      if (typeof el.showPicker === "function") {
+      if ("showPicker" in el && typeof el.showPicker === "function") {
         try {
           el.showPicker();
         } catch (_) {
-          if (typeof el.focus === "function") el.focus();
+          el.focus();
         }
-      } else if (typeof el.focus === "function") {
+      } else {
         el.focus();
       }
     }

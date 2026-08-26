@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { 
   Search, 
   Users, 
@@ -14,7 +14,8 @@ import {
   Wallet,
   Check,
   Zap,
-  Loader2
+  Loader2,
+  ChevronDown
 } from "lucide-react";
 import { formatDistanceToNow, parseISO } from "date-fns";
 import { api } from "@/lib/api";
@@ -68,58 +69,116 @@ function getInitials(name?: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+interface PaginatedMembersResponse {
+  items: Member[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  stats: {
+    total: number;
+    admins: number;
+    active: number;
+    total_debt: number;
+  };
+}
+
+const PAGE_SIZE = 10;
+
 export default function MembersPage() {
-  const { loading: authLoading } = useAuth();
+  const { loading: authLoading, isAdmin } = useAuth();
   const { toast } = useToast();
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [stats, setStats] = useState({ total: 0, admins: 0, active: 0, totalDebt: 0 });
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const observerTarget = useRef<HTMLDivElement | null>(null);
+
+  // Debounce search query
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [searchQuery]);
+
+  const load = useCallback(async (pageNum = 1, isAppend = false, query = debouncedSearch) => {
+    if (pageNum === 1) setLoading(true);
+    else setLoadingMore(true);
+
     try {
-      const data = await api.get<Member[]>(`/members${chatIdQuery(true)}`);
-      setMembers(data ?? []);
+      const params = new URLSearchParams();
+      params.set("page", String(pageNum));
+      params.set("page_size", String(PAGE_SIZE));
+      if (query.trim()) params.set("search", query.trim());
+
+      const res = await api.get<PaginatedMembersResponse | Member[]>(
+        `/members?${params.toString()}${chatIdQuery()}`
+      );
+
+      if (res && "items" in res) {
+        const fetched = res.items || [];
+        setMembers(prev => isAppend ? [...prev, ...fetched] : fetched);
+        setTotalCount(res.total ?? 0);
+        setTotalPages(res.total_pages ?? 1);
+        setPage(res.page ?? pageNum);
+        if (res.stats) {
+          setStats({
+            total: res.stats.total ?? 0,
+            admins: res.stats.admins ?? 0,
+            active: res.stats.active ?? 0,
+            totalDebt: res.stats.total_debt ?? 0,
+          });
+        }
+      } else if (Array.isArray(res)) {
+        setMembers(res);
+        setTotalCount(res.length);
+        setTotalPages(1);
+      }
     } catch (e: unknown) {
       toast((e as Error).message, "error");
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
-  }, [toast]);
+  }, [debouncedSearch, toast]);
 
-  // Wait for AuthContext (it sets the initData auth header) before fetching.
+  // Wait for AuthContext before initial fetch & reload on search change
   useEffect(() => {
     if (authLoading) return;
-    load();
-  }, [load, authLoading]);
+    setPage(1);
+    load(1, false, debouncedSearch);
+  }, [load, authLoading, debouncedSearch]);
 
-  const { isAdmin } = useAuth();
+  const loadMore = useCallback(() => {
+    if (loading || loadingMore || page >= totalPages) return;
+    const nextPage = page + 1;
+    setPage(nextPage);
+    load(nextPage, true, debouncedSearch);
+  }, [loading, loadingMore, page, totalPages, load, debouncedSearch]);
 
-  // 1. Stats Calculations
-  const stats = useMemo(() => {
-    const total = members.length;
-    const admins = members.filter(m => m.role?.toLowerCase() === "admin").length;
-    const active = members.filter(m => m.status?.toLowerCase() === "active").length;
-    const totalDebt = members.reduce((acc, m) => acc + (m.unpaid_debt || 0), 0);
-    return { total, admins, active, totalDebt };
-  }, [members]);
-
-  // 2. Search Filter
-  const filteredMembers = useMemo(() => {
-    if (!searchQuery.trim()) return members;
-    const query = searchQuery.toLowerCase();
-    return members.filter(m => {
-      const displayName = m.name || m.full_name || "";
-      const username = m.username || "";
-      const userId = m.user_id || "";
-      return (
-        displayName.toLowerCase().includes(query) ||
-        username.toLowerCase().includes(query) ||
-        userId.includes(query)
-      );
-    });
-  }, [members, searchQuery]);
+  // Infinite Scroll Observer
+  useEffect(() => {
+    const target = observerTarget.current;
+    if (!target) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && page < totalPages && !loading && !loadingMore) {
+          loadMore();
+        }
+      },
+      { threshold: 0.1 }
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [page, totalPages, loading, loadingMore, loadMore]);
 
   const [settlingUserId, setSettlingUserId] = useState<string | null>(null);
   const [bulkSettling, setBulkSettling] = useState(false);
@@ -137,7 +196,7 @@ export default function MembersPage() {
         `Settled ${res.settled_invoices_count} orders ($${res.settled_amount.toFixed(2)}) for ${member.name || member.full_name}`,
         "success"
       );
-      load();
+      load(1, false);
     } catch (e: unknown) {
       toast((e as Error).message, "error");
     } finally {
@@ -147,24 +206,26 @@ export default function MembersPage() {
 
   const handleSettleAllGroupDebt = async () => {
     const debtMembers = members.filter((m) => (m.unpaid_debt || 0) > 0.009);
-    if (debtMembers.length === 0) {
+    if (debtMembers.length === 0 && stats.totalDebt <= 0.009) {
       toast("No outstanding debt in group", "info");
       return;
     }
     setBulkSettling(true);
     try {
+      // Settle all members with debt
+      const targetIds = debtMembers.length > 0 ? debtMembers.map((m) => m.user_id) : [];
       const res = await api.post<{
         settled_users_count: number;
         settled_invoices_count: number;
         settled_amount: number;
       }>("/members/settle-bulk", {
-        user_ids: debtMembers.map((m) => m.user_id),
+        user_ids: targetIds,
       });
       toast(
         `Successfully settled $${res.settled_amount.toFixed(2)} across ${res.settled_users_count} members!`,
         "success"
       );
-      load();
+      load(1, false);
     } catch (e: unknown) {
       toast((e as Error).message, "error");
     } finally {
@@ -206,7 +267,7 @@ export default function MembersPage() {
           <Button size="sm" variant="secondary" onClick={handleCopyUserlist} disabled={members.length === 0}>
             Copy
           </Button>
-          <Button size="sm" variant="secondary" onClick={load}>
+          <Button size="sm" variant="secondary" onClick={() => load(1, false)}>
             <RefreshCw size={13} />
           </Button>
         </div>
@@ -238,7 +299,7 @@ export default function MembersPage() {
             <Button size="sm" variant="secondary" onClick={handleCopyUserlist} disabled={members.length === 0}>
               Copy Members List
             </Button>
-            <Button size="sm" variant="secondary" onClick={load}>
+            <Button size="sm" variant="secondary" onClick={() => load(1, false)}>
               <RefreshCw size={13} className="mr-1" /> Refresh
             </Button>
           </div>
@@ -317,118 +378,134 @@ export default function MembersPage() {
           <div className="space-y-3">
             {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-16 rounded-[var(--radius-lg)]" />)}
           </div>
-        ) : filteredMembers.length === 0 ? (
+        ) : members.length === 0 ? (
           <EmptyState 
             icon={<Users size={32} />} 
             title={searchQuery ? "No members found" : "No registered members"}
             description={searchQuery ? "Try refining your search filter." : "Members will appear here once they register or participate in polls."} 
           />
         ) : (
-          <Card variant="default" padding="none" className="overflow-hidden border border-[var(--border)] rounded-[var(--radius-lg)] shadow-sm animate-fade-in bg-[var(--surface)]">
-            <div className="divide-y divide-[var(--border)]">
-              {filteredMembers.map(m => {
-                const displayName = m.name || m.full_name || `User ${m.user_id}`;
-                const isAdm = m.role?.toLowerCase() === "admin";
-                const isActive = m.status?.toLowerCase() === "active";
-                const avatarStyle = getAvatarStyle(displayName);
-                const initials = getInitials(displayName);
+          <div className="space-y-3">
+            <Card variant="default" padding="none" className="overflow-hidden border border-[var(--border)] rounded-[var(--radius-lg)] shadow-sm animate-fade-in bg-[var(--surface)]">
+              <div className="divide-y divide-[var(--border)]">
+                {members.map(m => {
+                  const displayName = m.name || m.full_name || `User ${m.user_id}`;
+                  const isAdm = m.role?.toLowerCase() === "admin";
+                  const isActive = m.status?.toLowerCase() === "active";
+                  const avatarStyle = getAvatarStyle(displayName);
+                  const initials = getInitials(displayName);
 
-                return (
-                  <div 
-                    key={m.user_id}
-                    className="flex items-center justify-between p-3 sm:p-4 hover:bg-[var(--surface-2)] transition-colors gap-3"
-                  >
-                    {/* Left: Avatar + Info */}
-                    <div className="flex items-center gap-3 min-w-0 flex-1">
-                      {/* Avatar */}
-                      <div className="relative shrink-0">
-                        <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs ${avatarStyle.bg} ${avatarStyle.text}`}>
-                          {initials}
+                  return (
+                    <div 
+                      key={m.user_id}
+                      className="flex items-center justify-between p-3 sm:p-4 hover:bg-[var(--surface-2)] transition-colors gap-3"
+                    >
+                      {/* Left: Avatar + Info */}
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        {/* Avatar */}
+                        <div className="relative shrink-0">
+                          <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs ${avatarStyle.bg} ${avatarStyle.text}`}>
+                            {initials}
+                          </div>
+                          <span 
+                            className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-[var(--surface)] ${
+                              isActive ? "bg-emerald-500" : "bg-neutral-400"
+                            }`}
+                          />
                         </div>
-                        <span 
-                          className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-[var(--surface)] ${
-                            isActive ? "bg-emerald-500" : "bg-neutral-400"
-                          }`}
-                        />
-                      </div>
 
-                      {/* Info */}
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-xs font-bold text-[var(--text)] truncate">{displayName}</span>
-                          <span className={`px-1.5 py-0.5 text-[8px] font-bold rounded-full ${
-                            isAdm 
-                              ? "bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300"
-                              : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400"
-                          }`}>
-                            {isAdm ? "Admin" : "Member"}
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-[var(--text-muted)] mt-0.5 truncate font-medium">
-                          {m.username ? `@${m.username}` : `ID: ${m.user_id}`}
-                          {m.last_active_at && (
-                            <> · Active {formatDistanceToNow(parseISO(m.last_active_at), { addSuffix: true })}</>
-                          )}
-                        </p>
-                        {m.bank_name && (
-                          <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold mt-0.5 truncate">
-                            🏦 ABA: {m.bank_name}
+                        {/* Info */}
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs font-bold text-[var(--text)] truncate">{displayName}</span>
+                            <span className={`px-1.5 py-0.5 text-[8px] font-bold rounded-full ${
+                              isAdm 
+                                ? "bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300"
+                                : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400"
+                            }`}>
+                              {isAdm ? "Admin" : "Member"}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-[var(--text-muted)] mt-0.5 truncate font-medium">
+                            {m.username ? `@${m.username}` : `ID: ${m.user_id}`}
+                            {m.last_active_at && (
+                              <> · Active {formatDistanceToNow(parseISO(m.last_active_at), { addSuffix: true })}</>
+                            )}
                           </p>
-                        )}
+                          {m.bank_name && (
+                            <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold mt-0.5 truncate">
+                              🏦 ABA: {m.bank_name}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                    </div>
 
-                    {/* Actions / Debt Status / Info */}
-                    <div className="flex items-center gap-2 shrink-0">
-                      {(m.unpaid_debt ?? 0) > 0.009 ? (
-                        <Badge variant="danger" className="text-[10px] font-bold whitespace-nowrap">
-                          Debt: ${(m.unpaid_debt ?? 0).toFixed(2)}
-                        </Badge>
-                      ) : (m.total_spend ?? 0) > 0 ? (
-                        <Badge variant="success" className="text-[10px] whitespace-nowrap">
-                          ✓ Settled
-                        </Badge>
-                      ) : null}
+                      {/* Actions / Debt Status / Info */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        {(m.unpaid_debt ?? 0) > 0.009 ? (
+                          <Badge variant="danger" className="text-[10px] font-bold whitespace-nowrap">
+                            Debt: ${(m.unpaid_debt ?? 0).toFixed(2)}
+                          </Badge>
+                        ) : (m.total_spend ?? 0) > 0 ? (
+                          <Badge variant="success" className="text-[10px] whitespace-nowrap">
+                            ✓ Settled
+                          </Badge>
+                        ) : null}
 
-                      {isAdmin && (m.unpaid_debt ?? 0) > 0.009 && (
+                        {isAdmin && (m.unpaid_debt ?? 0) > 0.009 && (
+                          <Button
+                            size="sm"
+                            variant="primary"
+                            onClick={() => setConfirmMemberForSettle(m)}
+                            disabled={settlingUserId === m.user_id}
+                            className="gap-1 text-[11px] px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 font-bold"
+                            title={`Mark all unpaid orders as paid for ${displayName}`}
+                          >
+                            {settlingUserId === m.user_id ? (
+                              <Loader2 size={11} className="animate-spin" />
+                            ) : (
+                              <Check size={11} />
+                            )}
+                            <span>Mark Paid</span>
+                          </Button>
+                        )}
+
+                        {m.phone && (
+                          <div className="hidden sm:flex items-center gap-1 text-[10px] text-[var(--text-muted)] font-semibold bg-[var(--surface-2)] px-2 py-1 rounded-[var(--radius-sm)]">
+                            <Phone size={10} />
+                            <span>{m.phone}</span>
+                          </div>
+                        )}
                         <Button
                           size="sm"
-                          variant="primary"
-                          onClick={() => setConfirmMemberForSettle(m)}
-                          disabled={settlingUserId === m.user_id}
-                          className="gap-1 text-[11px] px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 font-bold"
-                          title={`Mark all unpaid orders as paid for ${displayName}`}
+                          variant="secondary"
+                          onClick={() => setSelectedMember(m)}
+                          className="gap-1 text-[11px] px-2.5 py-1"
                         >
-                          {settlingUserId === m.user_id ? (
-                            <Loader2 size={11} className="animate-spin" />
-                          ) : (
-                            <Check size={11} />
-                          )}
-                          <span>Mark Paid</span>
+                          <Wallet size={12} className="text-[var(--color-primary)]" />
+                          <span>View</span>
                         </Button>
-                      )}
-
-                      {m.phone && (
-                        <div className="hidden sm:flex items-center gap-1 text-[10px] text-[var(--text-muted)] font-semibold bg-[var(--surface-2)] px-2 py-1 rounded-[var(--radius-sm)]">
-                          <Phone size={10} />
-                          <span>{m.phone}</span>
-                        </div>
-                      )}
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => setSelectedMember(m)}
-                        className="gap-1 text-[11px] px-2.5 py-1"
-                      >
-                        <Wallet size={12} className="text-[var(--color-primary)]" />
-                        <span>View</span>
-                      </Button>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          </Card>
+                  );
+                })}
+              </div>
+            </Card>
+
+            {page < totalPages && (
+              <div ref={observerTarget} className="pt-1">
+                <button
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                  className="w-full flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold rounded-[var(--radius-md)] border cursor-pointer hover:bg-[var(--surface-2)] transition-colors"
+                  style={{ background: "var(--surface)", color: "var(--text-2)", borderColor: "var(--border)" }}
+                >
+                  <ChevronDown size={14} className={loadingMore ? "animate-spin" : "animate-bounce"} />
+                  {loadingMore ? "Loading more..." : `Load more (${totalCount - members.length} remaining)`}
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </main>
 
@@ -436,7 +513,7 @@ export default function MembersPage() {
         member={selectedMember}
         open={!!selectedMember}
         onClose={() => setSelectedMember(null)}
-        onUpdated={load}
+        onUpdated={() => load(1, false)}
       />
 
       {/* Confirmation: Single Member Settle */}

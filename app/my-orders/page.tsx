@@ -22,21 +22,14 @@ import { SkeletonRow } from "@/components/ui/Skeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useAuth } from "@/contexts/AuthContext";
 import { TopBar, DesktopHeader } from "@/components/layout/TopBar";
+import { 
+  fetchInvoiceWithCache, 
+  getInvoiceFromCache, 
+  type Invoice, 
+  type InvoiceDetailEntry 
+} from "@/lib/invoiceCache";
+import { InvoiceViewModal } from "@/components/orders/InvoiceViewModal";
 import type { Order, OrderItem } from "@/components/orders/OrderItemsEditor";
-
-interface InvoiceDetailItem {
-  item_name: string;
-  qty: number;
-  price: number;
-  cost: number;
-}
-
-interface InvoicePersonDetail {
-  user_id?: string;
-  user_name?: string;
-  items: InvoiceDetailItem[];
-  subtotal: number;
-}
 
 interface InvoiceRow {
   invoice_id: string;
@@ -48,23 +41,23 @@ interface InvoiceRow {
   payer_name: string;
   payer_user_id?: string;
   my_amount?: number;
+  my_paid?: boolean;
   my_amount_khr?: number | null;
   usd_khr_rate?: number;
-  details?: InvoicePersonDetail[];
 }
 
 type QuickFilter = "today" | "week" | "month" | "all" | "custom";
 
-const PAGE_SIZE = 15;
+const PAGE_SIZE = 10;
 
 export default function MyOrdersPage() {
-  const { user, profile, loading: authLoading } = useAuth();
+  const { user, profile, isAdmin, loading: authLoading } = useAuth();
   const { toast } = useToast();
 
   const [orders, setOrders] = useState<Order[]>([]);
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
-  const [invoiceDetailsMap, setInvoiceDetailsMap] = useState<Record<string, InvoicePersonDetail[]>>({});
   const [loading, setLoading] = useState(true);
+  const [viewInvoiceId, setViewInvoiceId] = useState<string | null>(null);
 
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("week");
   const [fromDate, setFromDate] = useState(() => format(startOfWeek(new Date(), { weekStartsOn: 1 }), "yyyy-MM-dd"));
@@ -75,14 +68,14 @@ export default function MyOrdersPage() {
     return String(user?.id || profile?.user_id || "").trim();
   }, [user?.id, profile?.user_id]);
 
-  const normName = useCallback((str?: any): string => {
+  const normName = useCallback((str?: unknown): string => {
     if (!str) return "";
     return String(str).toLowerCase().replace(/[\s\u200B-\u200D\uFEFF]+/g, " ").trim();
   }, []);
 
   const myNames = useMemo(() => {
     const set = new Set<string>();
-    if ((profile as any)?.name) set.add(normName((profile as any).name));
+    if (profile && "name" in profile && typeof profile.name === "string") set.add(normName(profile.name));
     if (profile?.username) set.add(normName(profile.username));
     if (profile?.full_name) set.add(normName(profile.full_name));
     if (user?.username) set.add(normName(user.username));
@@ -93,7 +86,7 @@ export default function MyOrdersPage() {
     return set;
   }, [profile, user, normName]);
 
-  const isMyIdentity = useCallback((userId?: any, userName?: any): boolean => {
+  const isMyIdentity = useCallback((userId?: unknown, userName?: unknown): boolean => {
     const uidStr = String(userId || "").trim();
     if (uidStr) {
       return Boolean(myUserId) && uidStr === myUserId;
@@ -111,40 +104,42 @@ export default function MyOrdersPage() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
+      const orderParams = new URLSearchParams();
+      const invoiceParams = new URLSearchParams();
+      if (fromDate) {
+        orderParams.set("from", fromDate);
+        invoiceParams.set("from", fromDate);
+      }
+      if (toDate) {
+        orderParams.set("to", toDate);
+        invoiceParams.set("to", toDate);
+      }
+      orderParams.set("my_only", "true");
+
       const [ordersData, invoicesData] = await Promise.all([
-        api.get<Order[]>(`/orders${chatIdQuery(true)}`),
-        api.get<InvoiceRow[]>(`/invoices${chatIdQuery(true)}`),
+        api.get<Order[] | { items: Order[] }>(`/orders?${orderParams.toString()}${chatIdQuery()}`),
+        api.get<InvoiceRow[] | { items: InvoiceRow[] }>(`/invoices?${invoiceParams.toString()}${chatIdQuery()}`),
       ]);
 
-      const fetchedOrders = Array.isArray(ordersData) ? ordersData : [];
-      const fetchedInvoices = Array.isArray(invoicesData) ? invoicesData : [];
+      const fetchedOrders = Array.isArray(ordersData)
+        ? ordersData
+        : ordersData && "items" in ordersData && Array.isArray(ordersData.items)
+        ? ordersData.items
+        : [];
+      const fetchedInvoices = Array.isArray(invoicesData)
+        ? invoicesData
+        : invoicesData && "items" in invoicesData && Array.isArray(invoicesData.items)
+        ? invoicesData.items
+        : [];
 
       setOrders(fetchedOrders);
       setInvoices(fetchedInvoices);
-
-      // Fetch invoice details for invoices to get exact prices & subtotals per user
-      const detailsMap: Record<string, InvoicePersonDetail[]> = {};
-      await Promise.all(
-        fetchedInvoices.slice(0, 100).map(async (inv) => {
-          try {
-            const detail = await api.get<{ details?: InvoicePersonDetail[] }>(`/invoices/${inv.invoice_id}`);
-            if (detail?.details) {
-              if (inv.order_id) detailsMap[inv.order_id] = detail.details;
-              if (inv.invoice_id) detailsMap[inv.invoice_id] = detail.details;
-            }
-          } catch (_) {
-            // Ignore single invoice fetch failure
-          }
-        })
-      );
-      setInvoiceDetailsMap(detailsMap);
-
     } catch (e: unknown) {
       toast((e as Error).message, "error");
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [fromDate, toDate, toast]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -231,13 +226,12 @@ export default function MyOrdersPage() {
       const inv = invoiceMapByOrderId.get(ord.order_id);
       const payerName = inv?.payer_name || ord.paid_by?.username || "Unknown Payer";
 
-      // Items calculation
+      // Check if invoice detail is cached in memory
+      const cachedInv = getInvoiceFromCache(ord.order_id) || (inv?.invoice_id ? getInvoiceFromCache(inv.invoice_id) : undefined);
       let orderMyAmount = 0;
-      const invDetails = invoiceDetailsMap[ord.order_id];
 
-      if (invDetails) {
-        // Find my subtotal in invoice details if available
-        const myDetail = invDetails.find((d) => isMyIdentity(d.user_id, d.user_name));
+      if (cachedInv?.details) {
+        const myDetail = cachedInv.details.find((d) => isMyIdentity(d.user_id, d.user_name));
         if (myDetail) {
           orderMyAmount = myDetail.subtotal;
         }
@@ -270,7 +264,7 @@ export default function MyOrdersPage() {
       totalItemsCount,
       paidByList,
     };
-  }, [myFilteredOrders, invoiceMapByOrderId, invoiceDetailsMap, myUserId, myNames]);
+  }, [myFilteredOrders, invoiceMapByOrderId, isMyIdentity]);
 
   return (
     <div className="min-h-screen pb-24 md:pb-8">
@@ -413,10 +407,9 @@ export default function MyOrdersPage() {
               {shownOrders.map((ord) => {
                 const inv = invoiceMapByOrderId.get(ord.order_id);
                 const payer = inv?.payer_name || ord.paid_by?.username || "Not assigned";
-                const invDetails = invoiceDetailsMap[ord.order_id];
+                const cachedInv = getInvoiceFromCache(ord.order_id) || (inv?.invoice_id ? getInvoiceFromCache(inv.invoice_id) : undefined);
 
-                // Calculate order subtotal for my items
-                const myDetail = invDetails ? invDetails.find((d) => isMyIdentity(d.user_id, d.user_name)) : null;
+                const myDetail = cachedInv?.details ? cachedInv.details.find((d) => isMyIdentity(d.user_id, d.user_name)) : null;
                 let myOrderSubtotal = 0;
                 if (myDetail) {
                   myOrderSubtotal = myDetail.subtotal;
@@ -424,12 +417,19 @@ export default function MyOrdersPage() {
                   myOrderSubtotal = inv.my_amount;
                 }
 
+                const isPaid = Boolean(myDetail?.paid || inv?.my_paid);
+
                 return (
                   <Card 
                     key={ord.order_id} 
                     variant="default" 
                     padding="md"
-                    className="hover:border-[var(--color-primary-light)] transition-colors space-y-3"
+                    className="hover:border-[var(--color-primary-light)] transition-colors space-y-3 cursor-pointer"
+                    onClick={() => {
+                      if (inv?.invoice_id || ord.has_invoice) {
+                        setViewInvoiceId(inv?.invoice_id || ord.order_id);
+                      }
+                    }}
                   >
                     {/* Header info */}
                     <div className="flex flex-wrap items-start justify-between gap-2 border-b border-[var(--border)] pb-2.5">
@@ -451,7 +451,7 @@ export default function MyOrdersPage() {
                           Payer: {payer}
                         </Badge>
                         {ord.has_invoice ? (
-                          (myDetail as any)?.paid || (inv as any)?.my_paid ? (
+                          isPaid ? (
                             <Badge variant="success" className="text-[10px]">
                               ✓ Paid
                             </Badge>
@@ -478,11 +478,10 @@ export default function MyOrdersPage() {
                           const dishName = it.item_name || it.name || "Dish";
                           const qty = Number(it.qty) || 1;
                           
-                          // Try to find individual item price from invoice details
                           let itemPrice: number | null = null;
-                          if (invDetails) {
-                            const myDetail = invDetails.find((d) => isMyIdentity(d.user_id, d.user_name));
-                            const matchedItem = myDetail?.items.find((dIt) => dIt.item_name === dishName);
+                          if (cachedInv?.details) {
+                            const matchedDetail = cachedInv.details.find((d) => isMyIdentity(d.user_id, d.user_name));
+                            const matchedItem = matchedDetail?.items.find((dIt) => dIt.item_name === dishName);
                             if (matchedItem) itemPrice = matchedItem.cost;
                           }
 
@@ -549,6 +548,14 @@ export default function MyOrdersPage() {
           )}
         </div>
       </div>
+
+      <InvoiceViewModal
+        invoiceId={viewInvoiceId}
+        open={!!viewInvoiceId}
+        onClose={() => setViewInvoiceId(null)}
+        isAdmin={isAdmin}
+        onResent={loadData}
+      />
     </div>
   );
 }

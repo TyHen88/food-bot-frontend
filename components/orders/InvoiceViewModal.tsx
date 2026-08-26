@@ -12,42 +12,19 @@ import { downloadInvoicePdf } from "@/lib/invoicePdf";
 import { Download, Send, Check, RotateCcw, Loader2 } from "lucide-react";
 import { InvoicePdfDocument } from "./InvoicePdfDocument";
 
-export interface InvoiceItem {
-  item_name: string;
-  qty: number;
-  price: number;
-  cost: number;
-}
+import { 
+  fetchInvoiceWithCache, 
+  setInvoiceInCache, 
+  invalidateInvoiceCache, 
+  type Invoice, 
+  type InvoiceDetailEntry, 
+  type InvoiceItem 
+} from "@/lib/invoiceCache";
 
-export interface InvoiceDetailEntry {
-  user_id?: string;
-  user_name: string;
-  items: InvoiceItem[];
-  subtotal: number;
-  paid?: boolean;
-  paid_at?: string;
-  paid_amount?: number;
-}
-
-export interface Invoice {
-  invoice_id: string;
-  order_id: string;
-  chat_id: string;
-  chat_title?: string;
-  order_date: string;
-  details: InvoiceDetailEntry[];
-  total: number;
-  payer_name: string;
-  sent_count: number;
-  last_sent_at: string;
-  /** Payer's QR image as a data URI, when their payer row has one. */
-  payer_qr_image?: string;
-  /** Raw KHQR payload, when set on the payer row. */
-  payer_khqr_text?: string;
-}
+export type { Invoice, InvoiceDetailEntry, InvoiceItem };
 
 /** Read-only invoice breakdown — any role can view; admins can re-send the
- * Telegram message. Fetches by id so it always shows the stored invoice. */
+ * Telegram message. Uses client-side cache for instant display on click. */
 export function InvoiceViewModal({
   invoiceId,
   open,
@@ -77,7 +54,7 @@ export function InvoiceViewModal({
     if (!open || !invoiceId) { setInvoice(null); return; }
     let cancelled = false;
     setLoading(true);
-    api.get<Invoice>(`/invoices/${invoiceId}`)
+    fetchInvoiceWithCache(invoiceId)
       .then(inv => { if (!cancelled) setInvoice(inv); })
       .catch((e: unknown) => { if (!cancelled) toast((e as Error).message, "error"); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -94,12 +71,14 @@ export function InvoiceViewModal({
         user_name: d.user_name,
         paid: newPaid,
       });
-      setInvoice({
+      const updatedInvoice: Invoice = {
         ...invoice,
         details: invoice.details.map((item, i) =>
           i === index ? { ...item, paid: newPaid, paid_amount: newPaid ? item.subtotal : 0 } : item
         ),
-      });
+      };
+      setInvoice(updatedInvoice);
+      setInvoiceInCache(updatedInvoice);
       toast(newPaid ? `Marked ${d.user_name} as Paid` : `Unmarked ${d.user_name}`, "success");
       onResent?.();
     } catch (e: unknown) {
@@ -114,7 +93,9 @@ export function InvoiceViewModal({
     setResending(true);
     try {
       const res = await api.post<{ sent_count: number }>(`/invoices/${invoice.invoice_id}/resend`, {});
-      setInvoice({ ...invoice, sent_count: res?.sent_count ?? invoice.sent_count + 1 });
+      const updatedInvoice: Invoice = { ...invoice, sent_count: res?.sent_count ?? invoice.sent_count + 1 };
+      setInvoice(updatedInvoice);
+      setInvoiceInCache(updatedInvoice);
       toast("Invoice re-sent to the group", "success");
       onResent?.();
     } catch (e: unknown) {

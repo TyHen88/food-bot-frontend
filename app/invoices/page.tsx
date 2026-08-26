@@ -35,6 +35,20 @@ interface InvoiceRow {
   rate_date?: string;
 }
 
+interface PaginatedInvoicesResponse {
+  items: InvoiceRow[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  stats: {
+    orders: number;
+    amount: number;
+    amountKhr?: number;
+    amount_khr?: number;
+  };
+}
+
 /** "56,700៛", or null when this invoice has no pinned rate. */
 function khr(amount?: number | null): string | null {
   return amount === null || amount === undefined
@@ -42,132 +56,96 @@ function khr(amount?: number | null): string | null {
     : `${Math.round(amount).toLocaleString("en-US")}៛`;
 }
 
-/** Rows rendered initially and added per "Load more" click. */
-const PAGE_SIZE = 15;
+/** Default page size of 10 items */
+const PAGE_SIZE = 10;
 
 export default function InvoicesPage() {
   const { user, profile, isAdmin, loading: authLoading } = useAuth();
   const { toast } = useToast();
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
-  const [invoiceDetailsMap, setInvoiceDetailsMap] = useState<Record<string, any[]>>({});
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [stats, setStats] = useState({ orders: 0, amount: 0, amountKhr: 0 });
   const [viewId, setViewId] = useState<string | null>(null);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
 
-
-  const myUserId = useMemo(() => {
-    return String(user?.id || profile?.user_id || "").trim();
-  }, [user?.id, profile?.user_id]);
-
-  const normName = useCallback((str?: any): string => {
-    if (!str) return "";
-    return String(str).toLowerCase().replace(/[\s\u200B-\u200D\uFEFF]+/g, " ").trim();
-  }, []);
-
-  const myNames = useMemo(() => {
-    const set = new Set<string>();
-    if ((profile as any)?.name) set.add(normName((profile as any).name));
-    if (profile?.username) set.add(normName(profile.username));
-    if (profile?.full_name) set.add(normName(profile.full_name));
-    if (user?.username) set.add(normName(user.username));
-    if (user?.first_name) set.add(normName(user.first_name));
-    if (user?.last_name) set.add(normName(user.last_name));
-    const combined = [user?.first_name, user?.last_name].filter(Boolean).join(" ");
-    if (combined) set.add(normName(combined));
-    return set;
-  }, [profile, user, normName]);
-
-  const isMyIdentity = useCallback((userId?: any, userName?: any): boolean => {
-    const uidStr = String(userId || "").trim();
-    if (uidStr) {
-      return Boolean(myUserId) && uidStr === myUserId;
-    }
-    const nameStr = normName(userName);
-    if (!nameStr) return false;
-    return myNames.has(nameStr);
-  }, [myUserId, myNames, normName]);
-
-  const getMyAmount = useCallback((inv: InvoiceRow): number => {
-    const details = invoiceDetailsMap[inv.invoice_id];
-    if (details) {
-      const myDetail = details.find((d) => isMyIdentity(d.user_id, d.user_name));
-      if (myDetail) return myDetail.subtotal;
-    }
-    return inv.my_amount ?? 0;
-  }, [invoiceDetailsMap, isMyIdentity]);
-
-  // order_date is "yyyy-MM-dd", so plain string comparison sorts correctly.
-  const visibleInvoices = useMemo(
-    () => invoices.filter(inv => {
-      if (fromDate && inv.order_date < fromDate) return false;
-      if (toDate && inv.order_date > toDate) return false;
-      return true;
-    }),
-    [invoices, fromDate, toDate]
-  );
-
-  // Riel totals sum the per-invoice riel amounts rather than converting the
-  // dollar total once: each invoice was pinned to its own rate, so there is
-  // no single rate that could convert the range correctly.
-  const stats = useMemo(() => ({
-    orders: visibleInvoices.length,
-    amount: visibleInvoices.reduce((s, inv) => s + (inv.total ?? 0), 0),
-    amountKhr: visibleInvoices.reduce((s, inv) => s + (inv.total_khr ?? 0), 0),
-  }), [visibleInvoices]);
-
-  // Pagination state & Infinite Scroll
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  useEffect(() => { setVisibleCount(PAGE_SIZE); }, [fromDate, toDate]);
-  const shownInvoices = visibleInvoices.slice(0, visibleCount);
-
   const observerTarget = useRef<HTMLDivElement | null>(null);
+
+  const loadData = useCallback(async (pageNum = 1, isAppend = false) => {
+    if (pageNum === 1) setLoading(true);
+    else setLoadingMore(true);
+
+    try {
+      const params = new URLSearchParams();
+      params.set("page", String(pageNum));
+      params.set("page_size", String(PAGE_SIZE));
+      if (fromDate) params.set("from", fromDate);
+      if (toDate) params.set("to", toDate);
+
+      const qs = params.toString();
+      const res = await api.get<PaginatedInvoicesResponse | InvoiceRow[]>(
+        `/invoices?${qs}${chatIdQuery()}`
+      );
+
+      if (res && "items" in res) {
+        const fetched = res.items || [];
+        setInvoices((prev) => (isAppend ? [...prev, ...fetched] : fetched));
+        setTotalCount(res.total ?? 0);
+        setTotalPages(res.total_pages ?? 1);
+        setPage(res.page ?? pageNum);
+        if (res.stats) {
+          setStats({
+            orders: res.stats.orders ?? 0,
+            amount: res.stats.amount ?? 0,
+            amountKhr: res.stats.amount_khr ?? res.stats.amountKhr ?? 0,
+          });
+        }
+      } else if (Array.isArray(res)) {
+        setInvoices(res);
+        setTotalCount(res.length);
+        setTotalPages(1);
+      }
+    } catch (e: unknown) {
+      toast((e as Error).message, "error");
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  }, [fromDate, toDate, toast]);
+
+  // Initial load and filter change trigger reset
+  useEffect(() => {
+    if (authLoading) return;
+    setPage(1);
+    loadData(1, false);
+  }, [loadData, authLoading, fromDate, toDate]);
+
+  const loadMore = useCallback(() => {
+    if (loading || loadingMore || page >= totalPages) return;
+    const nextPage = page + 1;
+    setPage(nextPage);
+    loadData(nextPage, true);
+  }, [loading, loadingMore, page, totalPages, loadData]);
+
+  // Infinite Scroll Trigger
   useEffect(() => {
     const target = observerTarget.current;
     if (!target) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && visibleInvoices.length > visibleCount) {
-          setVisibleCount((prev) => prev + PAGE_SIZE);
+        if (entries[0].isIntersecting && page < totalPages && !loading && !loadingMore) {
+          loadMore();
         }
       },
       { threshold: 0.1 }
     );
     observer.observe(target);
     return () => observer.disconnect();
-  }, [visibleInvoices.length, visibleCount]);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await api.get<InvoiceRow[]>(`/invoices${chatIdQuery(true)}`);
-      const fetchedInvoices = data ?? [];
-      setInvoices(fetchedInvoices);
-
-      const detailsMap: Record<string, any[]> = {};
-      await Promise.all(
-        fetchedInvoices.slice(0, 100).map(async (inv) => {
-          try {
-            const detail = await api.get<{ details?: any[] }>(`/invoices/${inv.invoice_id}`);
-            if (detail?.details) {
-              detailsMap[inv.invoice_id] = detail.details;
-            }
-          } catch (_) {}
-        })
-      );
-      setInvoiceDetailsMap(detailsMap);
-    } catch (e: unknown) {
-      toast((e as Error).message, "error");
-    } finally {
-      setLoading(false);
-    }
-  }, [toast]);
-
-  // Wait for AuthContext (it sets the initData auth header) before fetching.
-  useEffect(() => {
-    if (authLoading) return;
-    load();
-  }, [load, authLoading]);
+  }, [page, totalPages, loading, loadingMore, loadMore]);
 
   return (
     <>
@@ -245,7 +223,7 @@ export default function InvoicesPage() {
               {[1, 2, 3].map(i => <SkeletonRow key={i} />)}
             </div>
           </Card>
-        ) : visibleInvoices.length === 0 ? (
+        ) : invoices.length === 0 ? (
           (fromDate || toDate) ? (
             <EmptyState
               icon={<Receipt size={40} />}
@@ -261,66 +239,72 @@ export default function InvoicesPage() {
           )
         ) : (
           <div className="space-y-2 animate-fade-in">
-            {shownInvoices.map(inv => (
-              <Card
-                key={inv.invoice_id}
-                variant="default"
-                padding="sm"
-                className="cursor-pointer hover:shadow-md transition-shadow"
-                onClick={() => setViewId(inv.invoice_id)}
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
-                    style={{ background: "var(--color-primary-light)", color: "var(--color-primary)" }}>
-                    <Receipt size={16} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-xs font-bold truncate" style={{ color: "var(--text)" }}>
-                        {inv.chat_title || `Order ${inv.order_id.slice(-6)}`}
-                      </p>
-                      {inv.sent_count > 1 && (
-                        <Badge variant="default" className="text-[10px] shrink-0">×{inv.sent_count}</Badge>
-                      )}
-                      {getMyAmount(inv) > 0 ? (
-                        <Badge variant="admin" className="text-[10px] shrink-0 font-bold">
-                          My Share: ${getMyAmount(inv).toFixed(2)}
-                        </Badge>
-                      ) : (
-                        <Badge variant="default" className="text-[10px] shrink-0">
-                          Not in order
-                        </Badge>
-                      )}
+            {invoices.map(inv => {
+              const myShare = inv.my_amount ?? 0;
+              return (
+                <Card
+                  key={inv.invoice_id}
+                  variant="default"
+                  padding="sm"
+                  className="cursor-pointer hover:shadow-md transition-shadow"
+                  onClick={() => setViewId(inv.invoice_id)}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
+                      style={{ background: "var(--color-primary-light)", color: "var(--color-primary)" }}>
+                      <Receipt size={16} />
                     </div>
-                    <p className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>
-                      {inv.order_date} · {inv.person_count} {inv.person_count === 1 ? "person" : "people"}
-                      {inv.payer_name ? ` · 💳 ${inv.payer_name}` : ""}
-                    </p>
-                  </div>
-                  <span className="text-right shrink-0">
-                    <span className="text-sm font-bold font-mono block text-[var(--text)]">
-                      Total: ${(inv.total ?? 0).toFixed(2)}
-                    </span>
-                    {khr(inv.total_khr) && (
-                      <span className="text-[10px] font-mono block" style={{ color: "var(--text-muted)" }}>
-                        {khr(inv.total_khr)}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs font-bold truncate" style={{ color: "var(--text)" }}>
+                          {inv.chat_title || `Order ${inv.order_id.slice(-6)}`}
+                        </p>
+                        {inv.sent_count > 1 && (
+                          <Badge variant="default" className="text-[10px] shrink-0">×{inv.sent_count}</Badge>
+                        )}
+                        {myShare > 0 ? (
+                          <Badge variant="admin" className="text-[10px] shrink-0 font-bold">
+                            My Share: ${myShare.toFixed(2)}
+                          </Badge>
+                        ) : (
+                          <Badge variant="default" className="text-[10px] shrink-0">
+                            Not in order
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-[11px] truncate" style={{ color: "var(--text-muted)" }}>
+                        {inv.order_date} · {inv.person_count} {inv.person_count === 1 ? "person" : "people"}
+                        {inv.payer_name ? ` · 💳 ${inv.payer_name}` : ""}
+                      </p>
+                    </div>
+                    <span className="text-right shrink-0">
+                      <span className="text-sm font-bold font-mono block text-[var(--text)]">
+                        Total: ${(inv.total ?? 0).toFixed(2)}
                       </span>
-                    )}
-                  </span>
-                  <ChevronRight size={14} className="shrink-0" style={{ color: "var(--text-muted)" }} />
-                </div>
-              </Card>
-            ))}
+                      {khr(inv.total_khr) && (
+                        <span className="text-[10px] font-mono block" style={{ color: "var(--text-muted)" }}>
+                          {khr(inv.total_khr)}
+                        </span>
+                      )}
+                    </span>
+                    <ChevronRight size={14} className="shrink-0" style={{ color: "var(--text-muted)" }} />
+                  </div>
+                </Card>
+              );
+            })}
 
-            {visibleInvoices.length > visibleCount && (
-              <button
-                onClick={() => setVisibleCount(c => c + PAGE_SIZE)}
-                className="w-full flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold rounded-[var(--radius-md)] border cursor-pointer hover:bg-[var(--surface-2)] transition-colors"
-                style={{ background: "var(--surface)", color: "var(--text-2)", borderColor: "var(--border)" }}
-              >
-                <ChevronDown size={14} />
-                Load more ({visibleInvoices.length - visibleCount} remaining)
-              </button>
+            {page < totalPages && (
+              <div ref={observerTarget} className="pt-1">
+                <button
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                  className="w-full flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold rounded-[var(--radius-md)] border cursor-pointer hover:bg-[var(--surface-2)] transition-colors"
+                  style={{ background: "var(--surface)", color: "var(--text-2)", borderColor: "var(--border)" }}
+                >
+                  <ChevronDown size={14} className={loadingMore ? "animate-spin" : "animate-bounce"} />
+                  {loadingMore ? "Loading more..." : `Load more (${totalCount - invoices.length} remaining)`}
+                </button>
+              </div>
             )}
           </div>
         )}
@@ -331,7 +315,7 @@ export default function InvoicesPage() {
         open={!!viewId}
         onClose={() => setViewId(null)}
         isAdmin={isAdmin}
-        onResent={load}
+        onResent={() => loadData(1, false)}
       />
     </>
   );

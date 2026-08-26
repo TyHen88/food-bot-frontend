@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Sparkles, Send, Bot, User, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { hapticImpact } from "@/lib/telegram";
@@ -99,10 +99,12 @@ export default function AIPage() {
       const stored = localStorage.getItem("fb_ai_chat");
       if (stored) {
         const parsed = JSON.parse(stored);
-        setMessages(parsed.map((m: any) => ({
-          ...m,
-          timestamp: new Date(m.timestamp)
-        })));
+        if (Array.isArray(parsed)) {
+          setMessages(parsed.map((m: { id: string; role: "user" | "assistant"; content: string; timestamp: string | number }) => ({
+            ...m,
+            timestamp: new Date(m.timestamp)
+          })));
+        }
       }
     } catch (_) {}
   }, []);
@@ -120,15 +122,16 @@ export default function AIPage() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  const handleSend = async (textToSend: string) => {
+  const handleSend = useCallback(async (textToSend: string) => {
     if (!textToSend.trim() || loading) return;
     hapticImpact("light");
 
+    const now = new Date();
     const userMessage: Message = {
-      id: Math.random().toString(36).substring(7),
+      id: `usr-${now.getTime()}`,
       role: "user",
       content: textToSend.trim(),
-      timestamp: new Date(),
+      timestamp: now,
     };
 
     const updatedMessages = [...messages, userMessage];
@@ -141,20 +144,21 @@ export default function AIPage() {
         query: textToSend.trim()
       });
 
+      const aiNow = new Date();
       const aiMessage: Message = {
-        id: Math.random().toString(36).substring(7),
+        id: `ai-${aiNow.getTime()}`,
         role: "assistant",
         content: data?.response ?? "Sorry, no response received.",
-        timestamp: new Date(),
+        timestamp: aiNow,
       };
 
       saveMessages([...updatedMessages, aiMessage]);
-    } catch (e: any) {
-      toast(e.message || "Failed to call AI assistant", "error");
+    } catch (e: unknown) {
+      toast((e as Error).message || "Failed to call AI assistant", "error");
     } finally {
       setLoading(false);
     }
-  };
+  }, [loading, messages, toast]);
 
   const clearChat = () => {
     hapticImpact("medium");
