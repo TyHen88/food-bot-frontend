@@ -8,20 +8,23 @@ import {
   CreditCard, 
   ShoppingBag, 
   Calendar,
-  ChevronDown,
-  Phone,
-  User,
-  Shield,
-  CheckCircle2,
-  Check,
-  RotateCcw,
-  Zap,
-  Loader2
+  ChevronDown, 
+  Phone, 
+  User, 
+  Shield, 
+  CheckCircle2, 
+  Check, 
+  RotateCcw, 
+  Zap, 
+  Loader2,
+  DollarSign,
+  Landmark,
+  AlertCircle
 } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { Card, StatCard } from "@/components/ui/Card";
+import { Card } from "@/components/ui/Card";
 import { SkeletonRow } from "@/components/ui/Skeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -31,7 +34,6 @@ import { api } from "@/lib/api";
 import { chatIdQuery } from "@/lib/telegram";
 import { 
   getInvoiceFromCache, 
-  fetchInvoiceWithCache, 
   invalidateInvoiceCache, 
   type Invoice, 
   type InvoiceDetailEntry 
@@ -76,6 +78,19 @@ interface InvoiceRow {
   payer_name: string;
   my_amount?: number;
   my_paid?: boolean;
+  my_amount_khr?: number | null;
+  usd_khr_rate?: number;
+}
+
+interface ExchangeRateData {
+  available: boolean;
+  rate_date?: string | null;
+  usd_khr?: number | null;
+  display?: string | null;
+  source?: string | null;
+  khr_rounding?: number;
+  stale?: boolean;
+  today?: string;
 }
 
 type QuickFilter = "today" | "week" | "month" | "all" | "custom";
@@ -104,6 +119,20 @@ function getInitials(name?: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+/** Convert USD to KHR with rounding to nearest note */
+function toKhr(usd: number, rate = 4047, rounding = 100): number {
+  const exact = (usd || 0) * (rate || 4047);
+  if (rounding && rounding > 1) {
+    return Math.round(exact / rounding) * rounding;
+  }
+  return Math.round(exact);
+}
+
+/** Format KHR with thousands separator and riel symbol */
+function formatKhr(amount: number): string {
+  return `${Math.round(amount).toLocaleString("en-US")}៛`;
+}
+
 export function MemberSpendModal({
   member,
   open,
@@ -119,6 +148,7 @@ export function MemberSpendModal({
   const { toast } = useToast();
   const [orders, setOrders] = useState<Order[]>([]);
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
+  const [rateInfo, setRateInfo] = useState<ExchangeRateData | null>(null);
   const [loading, setLoading] = useState(false);
   const [updatingPaidOrderId, setUpdatingPaidOrderId] = useState<string | null>(null);
   const [bulkUpdating, setBulkUpdating] = useState(false);
@@ -187,7 +217,7 @@ export function MemberSpendModal({
     return isMemberIdentity(it.user_id, it.name);
   }, [isMemberIdentity]);
 
-  // Load orders & invoices for member spend analysis
+  // Load orders, invoices, and NBC official exchange rate
   const loadData = useCallback(() => {
     if (!open || !member) {
       setOrders([]);
@@ -205,8 +235,9 @@ export function MemberSpendModal({
     Promise.all([
       api.get<Order[] | { items: Order[] }>(`/orders?${orderParams.toString()}${chatIdQuery()}`),
       api.get<InvoiceRow[] | { items: InvoiceRow[] }>(`/invoices?${invoiceParams.toString()}${chatIdQuery()}`),
+      api.get<ExchangeRateData>(`/exchange-rate${chatIdQuery()}`).catch(() => null),
     ])
-      .then(([ordersData, invoicesData]) => {
+      .then(([ordersData, invoicesData, exchangeRateData]) => {
         if (cancelled) return;
         const fetchedOrders = Array.isArray(ordersData)
           ? ordersData
@@ -221,6 +252,9 @@ export function MemberSpendModal({
 
         setOrders(fetchedOrders);
         setInvoices(fetchedInvoices);
+        if (exchangeRateData) {
+          setRateInfo(exchangeRateData);
+        }
       })
       .catch((e: unknown) => {
         if (!cancelled) toast((e as Error).message, "error");
@@ -284,66 +318,121 @@ export function MemberSpendModal({
     return () => observer.disconnect();
   }, [memberFilteredOrders.length, visibleCount]);
 
-  // Statistics & Payer breakdown calculation
+  // Statistics & Payer breakdown calculation in USD and KHR
   const stats = useMemo(() => {
-    let totalSpend = 0;
-    let totalPaid = 0;
-    let totalUnpaid = 0;
+    let totalSpendUSD = 0;
+    let totalPaidUSD = 0;
+    let totalUnpaidUSD = 0;
+
+    let totalSpendKHR = 0;
+    let totalPaidKHR = 0;
+    let totalUnpaidKHR = 0;
+
     let totalItemsCount = 0;
-    const paidToMap = new Map<string, { total: number; count: number }>();
+    let paidOrdersCount = 0;
+    let unpaidOrdersCount = 0;
+
+    const activeRate = rateInfo?.usd_khr && rateInfo.usd_khr > 0 ? rateInfo.usd_khr : 4047;
+    const rounding = rateInfo?.khr_rounding || 100;
+
+    const paidToMap = new Map<string, { 
+      totalUSD: number; 
+      totalKHR: number; 
+      count: number;
+      unpaidUSD: number;
+      unpaidKHR: number;
+      unpaidCount: number;
+    }>();
 
     memberFilteredOrders.forEach((ord) => {
       const inv = invoiceMapByOrderId.get(ord.order_id);
       const payerName = inv?.payer_name || ord.paid_by?.username || "Unknown Payer";
 
+      const orderRate = inv?.usd_khr_rate && inv.usd_khr_rate > 0 ? inv.usd_khr_rate : activeRate;
+
       const cachedInv = getInvoiceFromCache(ord.order_id) || (inv?.invoice_id ? getInvoiceFromCache(inv.invoice_id) : undefined);
-      let orderMemberAmount = 0;
+      let orderMemberAmountUSD = 0;
       let orderIsPaid = false;
 
       if (cachedInv?.details) {
         const mDetail = cachedInv.details.find((d) => isMemberIdentity(d.user_id, d.user_name));
         if (mDetail) {
-          orderMemberAmount = mDetail.subtotal;
+          orderMemberAmountUSD = mDetail.subtotal;
           orderIsPaid = Boolean(mDetail.paid);
         }
-      } else if (inv?.my_amount) {
-        orderMemberAmount = inv.my_amount;
+      } else if (inv?.my_amount !== undefined) {
+        orderMemberAmountUSD = inv.my_amount;
         orderIsPaid = Boolean(inv.my_paid);
       }
 
-      totalSpend += orderMemberAmount;
-      if (orderIsPaid) {
-        totalPaid += orderMemberAmount;
-      } else if (ord.has_invoice) {
-        totalUnpaid += orderMemberAmount;
+      const orderMemberAmountKHR = (inv?.my_amount_khr && inv.my_amount_khr > 0)
+        ? inv.my_amount_khr
+        : toKhr(orderMemberAmountUSD, orderRate, rounding);
+
+      totalSpendUSD += orderMemberAmountUSD;
+      totalSpendKHR += orderMemberAmountKHR;
+
+      if (ord.has_invoice) {
+        if (orderIsPaid) {
+          totalPaidUSD += orderMemberAmountUSD;
+          totalPaidKHR += orderMemberAmountKHR;
+          paidOrdersCount += 1;
+        } else {
+          totalUnpaidUSD += orderMemberAmountUSD;
+          totalUnpaidKHR += orderMemberAmountKHR;
+          unpaidOrdersCount += 1;
+        }
       }
 
       const orderItemQty = ord.memberItems.reduce((acc, it) => acc + (Number(it.qty) || 1), 0);
       totalItemsCount += orderItemQty;
 
       // Group amount spent to each payer
-      const current = paidToMap.get(payerName) || { total: 0, count: 0 };
+      const current = paidToMap.get(payerName) || { 
+        totalUSD: 0, 
+        totalKHR: 0, 
+        count: 0,
+        unpaidUSD: 0,
+        unpaidKHR: 0,
+        unpaidCount: 0
+      };
       paidToMap.set(payerName, {
-        total: current.total + orderMemberAmount,
+        totalUSD: current.totalUSD + orderMemberAmountUSD,
+        totalKHR: current.totalKHR + orderMemberAmountKHR,
         count: current.count + 1,
+        unpaidUSD: current.unpaidUSD + (ord.has_invoice && !orderIsPaid ? orderMemberAmountUSD : 0),
+        unpaidKHR: current.unpaidKHR + (ord.has_invoice && !orderIsPaid ? orderMemberAmountKHR : 0),
+        unpaidCount: current.unpaidCount + (ord.has_invoice && !orderIsPaid ? 1 : 0),
       });
     });
 
     const paidToList = Array.from(paidToMap.entries()).map(([payerName, stat]) => ({
       payerName,
-      amount: stat.total,
+      amountUSD: stat.totalUSD,
+      amountKHR: stat.totalKHR,
       orderCount: stat.count,
+      unpaidUSD: stat.unpaidUSD,
+      unpaidKHR: stat.unpaidKHR,
+      unpaidCount: stat.unpaidCount,
     }));
 
     return {
-      totalSpend,
-      totalPaid,
-      totalUnpaid,
+      totalSpendUSD,
+      totalPaidUSD,
+      totalUnpaidUSD,
+      totalSpendKHR,
+      totalPaidKHR,
+      totalUnpaidKHR,
       totalOrdersCount: memberFilteredOrders.length,
+      paidOrdersCount,
+      unpaidOrdersCount,
       totalItemsCount,
       paidToList,
+      rateUsed: activeRate,
+      rateDisplay: rateInfo?.display || `${activeRate.toLocaleString()} KHR / USD`,
+      rateDate: rateInfo?.rate_date || rateInfo?.today,
     };
-  }, [memberFilteredOrders, invoiceMapByOrderId, isMemberIdentity]);
+  }, [memberFilteredOrders, invoiceMapByOrderId, isMemberIdentity, rateInfo]);
 
   const handleToggleSinglePaid = async (orderId: string, currentPaid: boolean) => {
     if (!member) return;
@@ -420,12 +509,12 @@ export function MemberSpendModal({
       fullHeight={true}
       footer={<Button size="sm" onClick={onClose}>Close</Button>}
     >
-      <div className="space-y-4">
+      <div className="space-y-3.5">
         {/* Full Member Profile Banner */}
         <Card variant="flat" padding="sm" className="bg-[var(--surface-2)] border border-[var(--border)]">
           <div className="flex items-center gap-3">
             <div className="relative flex-shrink-0">
-              <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-sm ${avatarStyle.bg} ${avatarStyle.text}`}>
+              <div className={`w-11 h-11 rounded-full flex items-center justify-center font-bold text-sm ${avatarStyle.bg} ${avatarStyle.text}`}>
                 {initials}
               </div>
               <span 
@@ -452,7 +541,7 @@ export function MemberSpendModal({
                 )}
               </div>
 
-              <div className="flex items-center gap-3 text-[11px] text-[var(--text-muted)] mt-1 flex-wrap">
+              <div className="flex items-center gap-3 text-[11px] text-[var(--text-muted)] mt-0.5 flex-wrap">
                 <span>{member?.username ? `@${member.username}` : `ID: ${member?.user_id}`}</span>
                 {member?.phone && (
                   <span className="flex items-center gap-1 font-mono">
@@ -468,33 +557,38 @@ export function MemberSpendModal({
         <Card variant="flat" padding="sm" className="space-y-2 border border-[var(--border)]">
           <div className="flex items-center justify-between gap-1 overflow-x-auto pb-0.5 scrollbar-none">
             {[
-              { id: "all", label: "All Time" },
-              { id: "today", label: "Today" },
               { id: "week", label: "This Week" },
               { id: "month", label: "This Month" },
+              { id: "today", label: "Today" },
+              { id: "all", label: "All Time" },
             ].map((pill) => (
               <button
                 key={pill.id}
                 onClick={() => handleQuickFilter(pill.id as QuickFilter)}
-                className={`px-2.5 py-1 text-[11px] font-semibold rounded-full whitespace-nowrap transition-colors border cursor-pointer ${
+                className={`px-3 py-1 text-xs font-semibold rounded-full whitespace-nowrap transition-all border cursor-pointer ${
                   quickFilter === pill.id
-                    ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)] shadow-sm"
+                    ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)] shadow-xs"
                     : "bg-[var(--surface-2)] text-[var(--text-muted)] border-transparent hover:text-[var(--text)]"
                 }`}
               >
                 {pill.label}
               </button>
             ))}
+            {quickFilter === "custom" && (
+              <span className="px-2.5 py-1 text-xs font-semibold rounded-full bg-[var(--color-accent-light)] text-[var(--color-accent)] border border-[var(--color-accent)]/30 whitespace-nowrap">
+                Custom Range
+              </span>
+            )}
           </div>
 
           {/* Custom Date Pickers */}
           <div className="grid grid-cols-2 gap-2 pt-1 border-t border-[var(--border)]">
             <div>
-              <label className="block text-[10px] font-bold text-[var(--text-muted)] uppercase mb-1">
+              <label className="block text-[10px] font-bold text-[var(--text-muted)] uppercase mb-0.5">
                 From Date
               </label>
               <div className="relative">
-                <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--text-muted)] z-10" />
+                <Calendar size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--text-muted)] z-10" />
                 <input
                   type="date"
                   value={fromDate}
@@ -502,17 +596,17 @@ export function MemberSpendModal({
                     setFromDate(e.target.value);
                     setQuickFilter("custom");
                   }}
-                  className="w-full pl-9 pr-2.5 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:border-[var(--color-primary)] cursor-pointer min-h-[38px]"
+                  className="w-full pl-8 pr-2 py-1 text-xs rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:border-[var(--color-primary)] cursor-pointer h-8"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-[var(--text-muted)] uppercase mb-1">
+              <label className="block text-[10px] font-bold text-[var(--text-muted)] uppercase mb-0.5">
                 To Date
               </label>
               <div className="relative">
-                <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--text-muted)] z-10" />
+                <Calendar size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--text-muted)] z-10" />
                 <input
                   type="date"
                   value={toDate}
@@ -520,77 +614,173 @@ export function MemberSpendModal({
                     setToDate(e.target.value);
                     setQuickFilter("custom");
                   }}
-                  className="w-full pl-9 pr-2.5 py-1.5 text-xs rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:border-[var(--color-primary)] cursor-pointer min-h-[38px]"
+                  className="w-full pl-8 pr-2 py-1 text-xs rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:border-[var(--color-primary)] cursor-pointer h-8"
                 />
               </div>
             </div>
           </div>
         </Card>
 
-        {/* Top Summary Stat Cards */}
-        <div className="grid grid-cols-3 gap-2">
-          <StatCard
-            icon={<Wallet size={16} />}
-            value={`$${stats.totalSpend.toFixed(2)}`}
-            label="Total Spend"
-            color="primary"
-            padding="sm"
-          />
-          <StatCard
-            icon={<CheckCircle2 size={16} />}
-            value={`$${stats.totalPaid.toFixed(2)}`}
-            label="Total Paid"
-            color="success"
-            padding="sm"
-          />
-          <StatCard
-            icon={<CreditCard size={16} />}
-            value={`$${stats.totalUnpaid.toFixed(2)}`}
-            label="Unpaid Debt"
-            color={stats.totalUnpaid > 0.009 ? "warning" : "success"}
-            padding="sm"
-          />
+        {/* 2 Separate Cards: USD ($) and KHR (៛) with Exchange Rate */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          {/* Card 1: USD Overview */}
+          <Card variant="default" padding="sm" className="space-y-2 border border-[var(--border)]">
+            <div className="flex items-center justify-between border-b border-[var(--border)] pb-1.5">
+              <div className="flex items-center gap-1.5">
+                <div className="w-6 h-6 rounded-[var(--radius-sm)] bg-[var(--color-primary-light)] text-[var(--color-primary)] flex items-center justify-center font-bold text-xs">
+                  <DollarSign size={13} />
+                </div>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                  USD Summary ($)
+                </span>
+              </div>
+              <span className="text-sm font-extrabold text-[var(--color-primary)]">
+                ${stats.totalSpendUSD.toFixed(2)}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 pt-0.5">
+              <div className="px-2.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--surface-2)]">
+                <div className="flex items-center gap-1 text-[10px] font-semibold text-[var(--text-muted)] uppercase">
+                  <CheckCircle2 size={11} className="text-emerald-500" /> Total Paid
+                </div>
+                <div className="text-xs font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">
+                  ${stats.totalPaidUSD.toFixed(2)}
+                </div>
+                <div className="text-[10px] text-[var(--text-muted)]">
+                  {stats.paidOrdersCount} orders paid
+                </div>
+              </div>
+
+              <div className={`px-2.5 py-1.5 rounded-[var(--radius-sm)] ${
+                stats.totalUnpaidUSD > 0.009 
+                  ? "bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/40" 
+                  : "bg-[var(--surface-2)]"
+              }`}>
+                <div className="flex items-center gap-1 text-[10px] font-semibold uppercase text-[var(--text-muted)]">
+                  <AlertCircle size={11} className={stats.totalUnpaidUSD > 0.009 ? "text-rose-500" : "text-emerald-500"} /> Unpaid Debt
+                </div>
+                <div className={`text-xs font-bold mt-0.5 ${
+                  stats.totalUnpaidUSD > 0.009 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"
+                }`}>
+                  ${stats.totalUnpaidUSD.toFixed(2)}
+                </div>
+                <div className={`text-[10px] ${
+                  stats.totalUnpaidUSD > 0.009 ? "text-rose-600 dark:text-rose-400 font-semibold" : "text-[var(--text-muted)]"
+                }`}>
+                  {stats.unpaidOrdersCount > 0 ? `${stats.unpaidOrdersCount} unpaid` : "All settled"}
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          {/* Card 2: KHR Overview */}
+          <Card variant="default" padding="sm" className="space-y-2 border border-[var(--border)]">
+            <div className="flex items-center justify-between border-b border-[var(--border)] pb-1.5">
+              <div className="flex items-center gap-1.5">
+                <div className="w-6 h-6 rounded-[var(--radius-sm)] bg-[var(--color-accent-light)] text-[var(--color-accent)] flex items-center justify-center font-bold text-xs">
+                  <Landmark size={13} />
+                </div>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                  KHR Summary (៛)
+                </span>
+              </div>
+              <span className="text-sm font-extrabold text-[var(--color-accent)]">
+                {formatKhr(stats.totalSpendKHR)}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 pt-0.5">
+              <div className="px-2.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--surface-2)]">
+                <div className="flex items-center gap-1 text-[10px] font-semibold text-[var(--text-muted)] uppercase">
+                  <CheckCircle2 size={11} className="text-emerald-500" /> Total Paid
+                </div>
+                <div className="text-xs font-bold text-[var(--text)] mt-0.5">
+                  {formatKhr(stats.totalPaidKHR)}
+                </div>
+                <div className="text-[10px] text-[var(--text-muted)]">
+                  {stats.paidOrdersCount} orders paid
+                </div>
+              </div>
+
+              <div className={`px-2.5 py-1.5 rounded-[var(--radius-sm)] ${
+                stats.totalUnpaidKHR > 0.009 
+                  ? "bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40" 
+                  : "bg-[var(--surface-2)]"
+              }`}>
+                <div className="flex items-center gap-1 text-[10px] font-semibold uppercase text-[var(--text-muted)]">
+                  <AlertCircle size={11} className={stats.totalUnpaidKHR > 0.009 ? "text-amber-500" : "text-emerald-500"} /> Unpaid Debt
+                </div>
+                <div className={`text-xs font-bold mt-0.5 ${
+                  stats.totalUnpaidKHR > 0.009 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"
+                }`}>
+                  {formatKhr(stats.totalUnpaidKHR)}
+                </div>
+                <div className={`text-[10px] ${
+                  stats.totalUnpaidKHR > 0.009 ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-[var(--text-muted)]"
+                }`}>
+                  {stats.unpaidOrdersCount > 0 ? `${stats.unpaidOrdersCount} unpaid` : "All settled"}
+                </div>
+              </div>
+            </div>
+
+            {/* Exchange Rate Badge */}
+            <div className="flex items-center justify-between text-[10px] text-[var(--text-muted)] pt-0.5">
+              <span>🏦 NBC Official Rate</span>
+              <span className="font-semibold text-[var(--text-2)]">{stats.rateDisplay}</span>
+            </div>
+          </Card>
         </div>
 
-        {/* Payer Breakdown Card: Amount spent to each payer */}
-        <Card variant="default" padding="sm" className="space-y-2">
-          <div className="flex items-center gap-2 border-b border-[var(--border)] pb-1.5">
-            <CreditCard size={16} className="text-[var(--color-primary)]" />
-            <span className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">
-              Amount Spent To Payers
+        {/* Payer Breakdown Card */}
+        <Card variant="default" padding="sm" className="space-y-1.5 border border-[var(--border)]">
+          <div className="flex items-center justify-between border-b border-[var(--border)] pb-1">
+            <div className="flex items-center gap-1.5">
+              <CreditCard size={13} className="text-[var(--color-primary)]" />
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                Amount Spent To Payers
+              </span>
+            </div>
+            <span className="text-[10px] text-[var(--text-muted)]">
+              {stats.paidToList.length} payers
             </span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
             {stats.paidToList.length > 0 ? (
-              stats.paidToList.map(({ payerName, amount, orderCount }) => (
+              stats.paidToList.map(({ payerName, amountUSD, amountKHR, orderCount, unpaidCount }) => (
                 <div 
                   key={payerName}
-                  className="flex items-center justify-between px-2.5 py-1.5 rounded-[var(--radius-md)] bg-[var(--surface-2)] text-xs font-medium"
+                  className="flex items-center justify-between px-2 py-1 rounded-[var(--radius-sm)] bg-[var(--surface-2)] text-xs"
                 >
-                  <span className="truncate text-[var(--text)] font-semibold">
+                  <span className="truncate text-[var(--text)] font-semibold text-[11px]">
                     Paid to {payerName}
                   </span>
-                  <span className="font-bold text-[var(--color-primary)] whitespace-nowrap ml-2">
-                    ${amount.toFixed(2)} <span className="text-[10px] text-[var(--text-muted)] font-normal">({orderCount}x)</span>
-                  </span>
+                  <div className="text-right ml-1.5 whitespace-nowrap">
+                    <span className="font-bold text-[11px] text-[var(--color-primary)]">
+                      ${amountUSD.toFixed(2)}
+                    </span>
+                    <span className="text-[9px] text-[var(--text-muted)] block leading-tight">
+                      {formatKhr(amountKHR)} · {orderCount}x {unpaidCount > 0 && <span className="text-rose-500 font-semibold">({unpaidCount} unpaid)</span>}
+                    </span>
+                  </div>
                 </div>
               ))
             ) : (
-              <p className="text-xs text-[var(--text-muted)] italic col-span-2">No payer records found</p>
+              <p className="text-[11px] text-[var(--text-muted)] italic col-span-2 py-0.5">No payer records found</p>
             )}
           </div>
         </Card>
 
         {/* Admin Bulk Mark Paid Banner */}
-        {isAdmin && stats.totalUnpaid > 0.009 && (
-          <div className="flex items-center justify-between p-3 rounded-[var(--radius-md)] bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 shadow-sm gap-2">
+        {isAdmin && stats.totalUnpaidUSD > 0.009 && (
+          <div className="flex items-center justify-between p-2.5 rounded-[var(--radius-md)] bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 shadow-xs gap-2">
             <div className="text-xs">
-              <span className="font-bold text-amber-900 dark:text-amber-200 block">
-                ⚡ Unpaid Balance: ${stats.totalUnpaid.toFixed(2)}
+              <span className="font-bold text-amber-900 dark:text-amber-200 block text-xs">
+                ⚡ Unpaid Balance: ${stats.totalUnpaidUSD.toFixed(2)} ({formatKhr(stats.totalUnpaidKHR)})
               </span>
-              <span className="text-[11px] text-amber-700 dark:text-amber-400">
-                Settle all unpaid orders for this member in one click.
+              <span className="text-[10px] text-amber-700 dark:text-amber-400">
+                Settle all {stats.unpaidOrdersCount} unpaid orders for this member in one click.
               </span>
             </div>
             <Button
@@ -598,12 +788,12 @@ export function MemberSpendModal({
               variant="primary"
               onClick={() => setConfirmBulkSettle(true)}
               disabled={bulkUpdating}
-              className="shrink-0 font-bold"
+              className="shrink-0 font-bold text-xs h-7.5 py-1 px-2.5"
             >
               {bulkUpdating ? (
-                <Loader2 size={13} className="animate-spin mr-1" />
+                <Loader2 size={12} className="animate-spin mr-1" />
               ) : (
-                <Zap size={13} className="mr-1" />
+                <Zap size={12} className="mr-1" />
               )}
               Mark All as Paid
             </Button>
@@ -612,12 +802,19 @@ export function MemberSpendModal({
 
         {/* Items & Dishes Breakdown List */}
         <div className="space-y-2">
-          <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)] px-1">
-            Complete Order History ({memberFilteredOrders.length})
-          </h4>
+          <div className="flex items-center justify-between px-1">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">
+              Complete Order History ({memberFilteredOrders.length})
+            </h4>
+            {stats.unpaidOrdersCount > 0 && (
+              <Badge variant="danger" className="text-[9px] py-0.2 px-1.5 font-bold">
+                {stats.unpaidOrdersCount} Unpaid
+              </Badge>
+            )}
+          </div>
 
           {loading ? (
-            <Card padding="sm" className="space-y-2">
+            <Card padding="sm" className="space-y-2 border border-[var(--border)]">
               <SkeletonRow />
               <SkeletonRow />
             </Card>
@@ -628,7 +825,7 @@ export function MemberSpendModal({
               description="This member has no recorded food orders matching the selected date range."
             />
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-2.5">
               {shownOrders.map((ord) => {
                 const inv = invoiceMapByOrderId.get(ord.order_id);
                 const payer = inv?.payer_name || ord.paid_by?.username || "Payer";
@@ -642,36 +839,41 @@ export function MemberSpendModal({
                     orderSubtotal = mDetail.subtotal;
                     isPaid = Boolean(mDetail.paid);
                   }
-                } else if (inv?.my_amount) {
+                } else if (inv?.my_amount !== undefined) {
                   orderSubtotal = inv.my_amount;
                   isPaid = Boolean(inv.my_paid);
                 }
 
+                const orderRate = inv?.usd_khr_rate && inv.usd_khr_rate > 0 ? inv.usd_khr_rate : (rateInfo?.usd_khr || 4047);
+                const orderSubtotalKHR = (inv?.my_amount_khr && inv.my_amount_khr > 0)
+                  ? inv.my_amount_khr
+                  : toKhr(orderSubtotal, orderRate, rateInfo?.khr_rounding || 100);
+
                 return (
                   <Card key={ord.order_id} variant="flat" padding="sm" className="space-y-2 border border-[var(--border)]">
-                    <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] pb-1.5 text-xs flex-wrap">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-[var(--color-primary)]">
+                    <div className="flex items-center justify-between gap-1.5 border-b border-[var(--border)] pb-1 text-xs flex-wrap">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold text-[var(--color-primary)] text-xs">
                           {format(new Date(ord.order_date + "T00:00:00"), "MMM d, yyyy")}
                         </span>
                         {ord.chat_title && (
-                          <Badge variant="member" className="text-[10px]">
+                          <Badge variant="member" className="text-[9px] py-0 px-1.5">
                             {ord.chat_title}
                           </Badge>
                         )}
                       </div>
-                      <div className="flex items-center gap-1.5">
-                        <Badge variant="admin" className="text-[10px]">
+                      <div className="flex items-center gap-1">
+                        <Badge variant="admin" className="text-[9px] py-0 px-1.5">
                           Payer: {payer}
                         </Badge>
                         {ord.has_invoice ? (
                           <>
                             {isPaid ? (
-                              <Badge variant="success" className="text-[10px]">
+                              <Badge variant="success" className="text-[9px] py-0 px-1.5 font-bold">
                                 ✓ Paid
                               </Badge>
                             ) : (
-                              <Badge variant="danger" className="text-[10px]">
+                              <Badge variant="danger" className="text-[9px] py-0 px-1.5 font-bold">
                                 Unpaid
                               </Badge>
                             )}
@@ -687,10 +889,10 @@ export function MemberSpendModal({
                                     subtotal: orderSubtotal,
                                   })
                                 }
-                                className={`px-2 py-0.5 text-[10px] font-bold rounded flex items-center gap-1 cursor-pointer transition-all ${
+                                className={`px-1.5 py-0.5 text-[9px] font-bold rounded flex items-center gap-1 cursor-pointer transition-all ${
                                   isPaid
                                     ? "bg-[var(--surface-2)] text-[var(--text-muted)] hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-[var(--border)]"
-                                    : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm"
+                                    : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs"
                                 }`}
                                 title={isPaid ? "Unmark as paid" : "Mark this order as paid"}
                               >
@@ -698,18 +900,18 @@ export function MemberSpendModal({
                                   <Loader2 size={10} className="animate-spin" />
                                 ) : isPaid ? (
                                   <>
-                                    <RotateCcw size={10} /> Unmark
+                                    <RotateCcw size={9} /> Unmark
                                   </>
                                 ) : (
                                   <>
-                                    <Check size={10} /> Mark Paid
+                                    <Check size={9} /> Mark Paid
                                   </>
                                 )}
                               </button>
                             )}
                           </>
                         ) : (
-                          <Badge variant="default" className="text-[10px]">
+                          <Badge variant="default" className="text-[9px] py-0 px-1.5">
                             Pending Invoice
                           </Badge>
                         )}
@@ -729,18 +931,27 @@ export function MemberSpendModal({
                           if (matchedItem) itemPrice = matchedItem.cost;
                         }
 
+                        const itemPriceKHR = itemPrice !== null ? toKhr(itemPrice, orderRate, rateInfo?.khr_rounding || 100) : null;
+
                         return (
                           <div 
                             key={idx}
                             className="flex items-center justify-between text-xs py-1 px-2.5 rounded bg-[var(--surface-2)] font-medium"
                           >
-                            <span className="truncate text-[var(--text)]">
-                              • {dishName} <span className="font-bold text-[10px] text-[var(--text-2)]">×{qty}</span>
+                            <span className="truncate text-[var(--text)] text-[11px]">
+                              • {dishName} <span className="font-bold text-[9px] text-[var(--text-2)]">×{qty}</span>
                             </span>
                             {itemPrice !== null && (
-                              <span className="font-bold font-mono text-[var(--text)] whitespace-nowrap">
-                                ${itemPrice.toFixed(2)}
-                              </span>
+                              <div className="text-right whitespace-nowrap ml-1.5">
+                                <span className="font-bold font-mono text-[var(--text)] text-[11px]">
+                                  ${itemPrice.toFixed(2)}
+                                </span>
+                                {itemPriceKHR !== null && (
+                                  <span className="text-[9px] text-[var(--text-muted)] block leading-none">
+                                    ≈ {formatKhr(itemPriceKHR)}
+                                  </span>
+                                )}
+                              </div>
                             )}
                           </div>
                         );
@@ -748,8 +959,19 @@ export function MemberSpendModal({
                     </div>
 
                     {orderSubtotal > 0 && (
-                      <div className="flex justify-end text-xs font-bold text-[var(--color-primary)] pt-1 border-t border-dashed border-[var(--border)]">
-                        Subtotal: ${orderSubtotal.toFixed(2)}
+                      <div className="flex items-center justify-between pt-1 text-xs border-t border-dashed border-[var(--border)]">
+                        <span className="text-[10px] text-[var(--text-muted)]">
+                          Rate: {orderRate.toLocaleString()} ៛/$
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] text-[var(--text-muted)] font-medium">Subtotal:</span>
+                          <span className="font-extrabold text-xs text-[var(--color-primary)]">
+                            ${orderSubtotal.toFixed(2)}
+                          </span>
+                          <span className="text-[11px] font-bold text-[var(--color-accent)]">
+                            ({formatKhr(orderSubtotalKHR)})
+                          </span>
+                        </div>
                       </div>
                     )}
                   </Card>
@@ -760,11 +982,11 @@ export function MemberSpendModal({
                 <div ref={observerTarget} className="pt-1">
                   <button
                     onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
-                    className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-semibold rounded-[var(--radius-md)] border cursor-pointer hover:bg-[var(--surface-2)] transition-colors"
+                    className="w-full flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold rounded-[var(--radius-md)] border cursor-pointer hover:bg-[var(--surface-2)] transition-colors"
                     style={{ background: "var(--surface)", color: "var(--text-2)", borderColor: "var(--border)" }}
                   >
-                    <ChevronDown size={14} className="animate-bounce" />
-                    Scroll to load more ({memberFilteredOrders.length - visibleCount} remaining)
+                    <ChevronDown size={13} className="animate-bounce" />
+                    Load more ({memberFilteredOrders.length - visibleCount} remaining)
                   </button>
                 </div>
               )}
@@ -791,7 +1013,7 @@ export function MemberSpendModal({
               <span className="font-bold">{displayName}</span>?
             </p>
             <p className="text-[11px] text-[var(--text-muted)] mt-1">
-              Total unpaid balance to settle: <strong className="text-[var(--text)]">${stats.totalUnpaid.toFixed(2)}</strong>.
+              Total unpaid balance to settle: <strong className="text-[var(--text)]">${stats.totalUnpaidUSD.toFixed(2)} ({formatKhr(stats.totalUnpaidKHR)})</strong>.
             </p>
           </div>
         }

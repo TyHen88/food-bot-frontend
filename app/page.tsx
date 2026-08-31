@@ -31,7 +31,7 @@ const QUICK_ACTIONS = [
   { href: "/settings", icon: Settings, label: "Settings", desc: "Configure global keys",
     iconClass: "bg-orange-50 dark:bg-orange-950/30 text-orange-500", adminOnly: true },
   { href: "/history", icon: History, label: "History", desc: "Audit logs & events",
-    iconClass: "bg-purple-50 dark:bg-purple-950/30 text-purple-500", adminOnly: true },
+    iconClass: "bg-purple-50 dark:bg-purple-950/30 text-purple-500" },
 ];
 
 export default function DashboardPage() {
@@ -128,30 +128,8 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* Quick Actions (Ask AI for everyone; admin tools for admins) */}
-        {!authLoading && (
-          <div className="mb-6">
-            <h2 className="text-xs font-bold uppercase tracking-wider mb-3" style={{ color: "var(--text-muted)", margin: 0 }}>
-              Quick Actions
-            </h2>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-2">
-              {QUICK_ACTIONS.filter(a => !a.adminOnly || isAdmin).map(({ href, icon: Icon, label, desc, iconClass }) => (
-                <Link key={href} href={href} className="flex items-center gap-3 p-3 rounded-[var(--radius-lg)] border bg-[var(--surface)] hover:bg-[var(--surface-2)] transition-all cursor-pointer" style={{ borderColor: "var(--border)", textDecoration: "none" }}>
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${iconClass}`}>
-                    <Icon size={16} />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-xs font-bold leading-tight m-0" style={{ color: "var(--text)" }}>{label}</p>
-                    <p className="text-[10px] m-0 truncate" style={{ color: "var(--text-muted)" }}>{desc}</p>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Calendar card */}
-        <Card variant="default" padding="none" className="overflow-hidden">
+        <Card variant="default" padding="none" className="overflow-hidden mb-6">
           {/* Month navigation */}
           <div className="flex items-center justify-between px-5 py-3"
             style={{ borderBottom: "1px solid var(--border)" }}>
@@ -217,6 +195,28 @@ export default function DashboardPage() {
             })}
           </div>
         </Card>
+
+        {/* Quick Actions (Ask AI for everyone; admin tools for admins) */}
+        {!authLoading && (
+          <div className="mb-6">
+            <h2 className="text-xs font-bold uppercase tracking-wider mb-3" style={{ color: "var(--text-muted)", margin: 0 }}>
+              Quick Actions
+            </h2>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-2">
+              {QUICK_ACTIONS.filter(a => !a.adminOnly || isAdmin).map(({ href, icon: Icon, label, desc, iconClass }) => (
+                <Link key={href} href={href} className="flex items-center gap-3 p-3 rounded-[var(--radius-lg)] border bg-[var(--surface)] hover:bg-[var(--surface-2)] transition-all cursor-pointer" style={{ borderColor: "var(--border)", textDecoration: "none" }}>
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${iconClass}`}>
+                    <Icon size={16} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold leading-tight m-0" style={{ color: "var(--text)" }}>{label}</p>
+                    <p className="text-[10px] m-0 truncate" style={{ color: "var(--text-muted)" }}>{desc}</p>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Day detail — bottom sheet on mobile, dialog on desktop */}
         <Modal

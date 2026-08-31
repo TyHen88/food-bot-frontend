@@ -28,7 +28,7 @@ const NAV: NavItem[] = [
   { href: "/schedule",  icon: <CalendarClock size={18} />,   label: "Schedule",  adminOnly: true },
   { href: "/members",   icon: <Users size={18} />,           label: "Members" },
   { href: "/settings",  icon: <Settings size={18} />,        label: "Settings",  adminOnly: true },
-  { href: "/history",   icon: <History size={18} />,         label: "History",   adminOnly: true },
+  { href: "/history",   icon: <History size={18} />,         label: "History" },
 ];
 
 export function Sidebar() {
