@@ -33,6 +33,13 @@ import {
 import { InvoiceViewModal } from "@/components/orders/InvoiceViewModal";
 import type { Order, OrderItem } from "@/components/orders/OrderItemsEditor";
 
+interface InvoiceDetailItem {
+  item_name: string;
+  qty: number;
+  price: number;
+  cost: number;
+}
+
 interface InvoiceRow {
   invoice_id: string;
   order_id: string;
@@ -46,6 +53,7 @@ interface InvoiceRow {
   my_paid?: boolean;
   my_amount_khr?: number | null;
   usd_khr_rate?: number;
+  my_items?: InvoiceDetailItem[];
 }
 
 interface ExchangeRateData {
@@ -62,6 +70,12 @@ interface ExchangeRateData {
 type QuickFilter = "today" | "week" | "month" | "all" | "custom";
 
 const PAGE_SIZE = 10;
+
+/** Normalize dish name by stripping numerals, bullets and list prefixes */
+function cleanDishName(name?: string): string {
+  if (!name) return "";
+  return name.replace(/^[\s\-•*·\d១-១០]+[.)\s]*/u, "").trim().toLowerCase();
+}
 
 /** Convert USD to KHR with rounding to nearest note */
 function toKhr(usd: number, rate = 4047, rounding = 100): number {
@@ -286,14 +300,17 @@ export default function MyOrdersPage() {
       let orderMyAmountUSD = 0;
       let orderIsPaid = false;
 
-      if (cachedInv?.details) {
+      if (inv?.my_amount !== undefined && inv.my_amount > 0) {
+        orderMyAmountUSD = inv.my_amount;
+        orderIsPaid = Boolean(inv.my_paid);
+      } else if (cachedInv?.details) {
         const myDetail = cachedInv.details.find((d) => isMyIdentity(d.user_id, d.user_name));
         if (myDetail) {
           orderMyAmountUSD = myDetail.subtotal;
           orderIsPaid = Boolean(myDetail.paid);
         }
-      } else if (inv?.my_amount !== undefined) {
-        orderMyAmountUSD = inv.my_amount;
+      } else if (inv?.my_items?.length) {
+        orderMyAmountUSD = inv.my_items.reduce((sum, item) => sum + (item.cost || (item.price * (item.qty || 1))), 0);
         orderIsPaid = Boolean(inv.my_paid);
       }
 
@@ -471,33 +488,35 @@ export default function MyOrdersPage() {
             </div>
 
             <div className="grid grid-cols-2 gap-2 pt-0.5">
-              <div className="px-2.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--surface-2)]">
-                <div className="flex items-center gap-1 text-[10px] font-semibold text-[var(--text-muted)] uppercase">
-                  <CheckCircle2 size={11} className="text-emerald-500" /> Total Paid
+              <div className="px-3 py-2 rounded-[var(--radius-sm)] bg-emerald-500/10 dark:bg-emerald-500/15 border border-emerald-500/20">
+                <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
+                  <CheckCircle2 size={12} className="text-emerald-600 dark:text-emerald-400" /> Total Paid
                 </div>
-                <div className="text-xs font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">
+                <div className="text-sm font-extrabold text-emerald-700 dark:text-emerald-300 mt-1">
                   ${statistics.totalPaidUSD.toFixed(2)}
                 </div>
-                <div className="text-[10px] text-[var(--text-muted)]">
-                  {statistics.paidOrdersCount} orders paid
+                <div className="text-[10px] font-medium text-emerald-700/80 dark:text-emerald-400/80 mt-0.5">
+                  {statistics.paidOrdersCount} {statistics.paidOrdersCount === 1 ? "order" : "orders"} paid
                 </div>
               </div>
 
-              <div className={`px-2.5 py-1.5 rounded-[var(--radius-sm)] ${
+              <div className={`px-3 py-2 rounded-[var(--radius-sm)] border transition-all ${
                 statistics.totalUnpaidUSD > 0.009 
-                  ? "bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/40" 
-                  : "bg-[var(--surface-2)]"
+                  ? "bg-rose-500/10 dark:bg-rose-500/15 border-rose-500/30" 
+                  : "bg-[var(--surface-2)] border-[var(--border)]"
               }`}>
-                <div className="flex items-center gap-1 text-[10px] font-semibold uppercase text-[var(--text-muted)]">
-                  <AlertCircle size={11} className={statistics.totalUnpaidUSD > 0.009 ? "text-rose-500" : "text-emerald-500"} /> Unpaid Debt
+                <div className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider ${
+                  statistics.totalUnpaidUSD > 0.009 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"
+                }`}>
+                  <AlertCircle size={12} className={statistics.totalUnpaidUSD > 0.009 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"} /> Unpaid Debt
                 </div>
-                <div className={`text-xs font-bold mt-0.5 ${
-                  statistics.totalUnpaidUSD > 0.009 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"
+                <div className={`text-sm font-extrabold mt-1 ${
+                  statistics.totalUnpaidUSD > 0.009 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"
                 }`}>
                   ${statistics.totalUnpaidUSD.toFixed(2)}
                 </div>
-                <div className={`text-[10px] ${
-                  statistics.totalUnpaidUSD > 0.009 ? "text-rose-600 dark:text-rose-400 font-semibold" : "text-[var(--text-muted)]"
+                <div className={`text-[10px] mt-0.5 ${
+                  statistics.totalUnpaidUSD > 0.009 ? "text-rose-700/90 dark:text-rose-400/90 font-semibold" : "text-[var(--text-muted)] font-medium"
                 }`}>
                   {statistics.unpaidOrdersCount > 0 ? `${statistics.unpaidOrdersCount} unpaid` : "All settled"}
                 </div>
@@ -522,33 +541,35 @@ export default function MyOrdersPage() {
             </div>
 
             <div className="grid grid-cols-2 gap-2 pt-0.5">
-              <div className="px-2.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--surface-2)]">
-                <div className="flex items-center gap-1 text-[10px] font-semibold text-[var(--text-muted)] uppercase">
-                  <CheckCircle2 size={11} className="text-emerald-500" /> Total Paid
+              <div className="px-3 py-2 rounded-[var(--radius-sm)] bg-emerald-500/10 dark:bg-emerald-500/15 border border-emerald-500/20">
+                <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
+                  <CheckCircle2 size={12} className="text-emerald-600 dark:text-emerald-400" /> Total Paid
                 </div>
-                <div className="text-xs font-bold text-[var(--text)] mt-0.5">
+                <div className="text-sm font-extrabold text-emerald-700 dark:text-emerald-300 mt-1">
                   {formatKhr(statistics.totalPaidKHR)}
                 </div>
-                <div className="text-[10px] text-[var(--text-muted)]">
-                  {statistics.paidOrdersCount} orders paid
+                <div className="text-[10px] font-medium text-emerald-700/80 dark:text-emerald-400/80 mt-0.5">
+                  {statistics.paidOrdersCount} {statistics.paidOrdersCount === 1 ? "order" : "orders"} paid
                 </div>
               </div>
 
-              <div className={`px-2.5 py-1.5 rounded-[var(--radius-sm)] ${
+              <div className={`px-3 py-2 rounded-[var(--radius-sm)] border transition-all ${
                 statistics.totalUnpaidKHR > 0.009 
-                  ? "bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40" 
-                  : "bg-[var(--surface-2)]"
+                  ? "bg-rose-500/10 dark:bg-rose-500/15 border-rose-500/30" 
+                  : "bg-[var(--surface-2)] border-[var(--border)]"
               }`}>
-                <div className="flex items-center gap-1 text-[10px] font-semibold uppercase text-[var(--text-muted)]">
-                  <AlertCircle size={11} className={statistics.totalUnpaidKHR > 0.009 ? "text-amber-500" : "text-emerald-500"} /> Unpaid Debt
+                <div className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider ${
+                  statistics.totalUnpaidKHR > 0.009 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"
+                }`}>
+                  <AlertCircle size={12} className={statistics.totalUnpaidKHR > 0.009 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"} /> Unpaid Debt
                 </div>
-                <div className={`text-xs font-bold mt-0.5 ${
-                  statistics.totalUnpaidKHR > 0.009 ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"
+                <div className={`text-sm font-extrabold mt-1 ${
+                  statistics.totalUnpaidKHR > 0.009 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"
                 }`}>
                   {formatKhr(statistics.totalUnpaidKHR)}
                 </div>
-                <div className={`text-[10px] ${
-                  statistics.totalUnpaidKHR > 0.009 ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-[var(--text-muted)]"
+                <div className={`text-[10px] mt-0.5 ${
+                  statistics.totalUnpaidKHR > 0.009 ? "text-rose-700/90 dark:text-rose-400/90 font-semibold" : "text-[var(--text-muted)] font-medium"
                 }`}>
                   {statistics.unpaidOrdersCount > 0 ? `${statistics.unpaidOrdersCount} unpaid` : "All settled"}
                 </div>
@@ -653,10 +674,12 @@ export default function MyOrdersPage() {
 
                 const myDetail = cachedInv?.details ? cachedInv.details.find((d) => isMyIdentity(d.user_id, d.user_name)) : null;
                 let myOrderSubtotal = 0;
-                if (myDetail) {
-                  myOrderSubtotal = myDetail.subtotal;
-                } else if (inv?.my_amount) {
+                if (inv?.my_amount !== undefined && inv.my_amount > 0) {
                   myOrderSubtotal = inv.my_amount;
+                } else if (myDetail) {
+                  myOrderSubtotal = myDetail.subtotal;
+                } else if (inv?.my_items?.length) {
+                  myOrderSubtotal = inv.my_items.reduce((sum, item) => sum + (item.cost || (item.price * (item.qty || 1))), 0);
                 }
 
                 const isPaid = Boolean(myDetail?.paid || inv?.my_paid);
@@ -718,12 +741,21 @@ export default function MyOrdersPage() {
                         {ord.myItems.map((it, idx) => {
                           const dishName = it.item_name || it.name || "Dish";
                           const qty = Number(it.qty) || 1;
+                          const cleanName = cleanDishName(dishName);
                           
                           let itemPrice: number | null = null;
-                          if (cachedInv?.details) {
+                          if (inv?.my_items?.length) {
+                            const matchedItem = inv.my_items.find(
+                              (dIt) => cleanDishName(dIt.item_name) === cleanName || dIt.item_name === dishName
+                            );
+                            if (matchedItem) itemPrice = matchedItem.cost || (matchedItem.price * qty);
+                          }
+                          if (itemPrice === null && cachedInv?.details) {
                             const matchedDetail = cachedInv.details.find((d) => isMyIdentity(d.user_id, d.user_name));
-                            const matchedItem = matchedDetail?.items.find((dIt) => dIt.item_name === dishName);
-                            if (matchedItem) itemPrice = matchedItem.cost;
+                            const matchedItem = matchedDetail?.items.find(
+                              (dIt) => cleanDishName(dIt.item_name) === cleanName || dIt.item_name === dishName
+                            );
+                            if (matchedItem) itemPrice = matchedItem.cost || (matchedItem.price * qty);
                           }
 
                           const itemPriceKHR = itemPrice !== null ? toKhr(itemPrice, orderRate, rateInfo?.khr_rounding || 100) : null;
