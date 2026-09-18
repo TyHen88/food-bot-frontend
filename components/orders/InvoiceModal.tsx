@@ -5,6 +5,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { api } from "@/lib/api";
+import { fetchInvoiceWithCache, invalidateInvoiceCache } from "@/lib/invoiceCache";
 import { Send, CheckSquare, Square, Landmark } from "lucide-react";
 import { type Order } from "./OrderItemsEditor";
 
@@ -62,10 +63,38 @@ export function InvoiceModal({ open, onClose, order, onInvoiceSent }: InvoiceMod
         // in dollars only.
         if (!cancelled) setRate(null);
       });
+
+    // If order already has an invoice, pre-fill prices and currencies
+    if (order.has_invoice) {
+      fetchInvoiceWithCache(order.order_id, true)
+        .then(inv => {
+          if (cancelled || !inv) return;
+          const prefillPrices: Record<string, string> = {};
+          inv.details?.forEach(d => {
+            d.items?.forEach(it => {
+              const name = (it.item_name || "Unknown").replace(/^[\s\-•*·]+/, "").trim() || "Unknown";
+              if (it.price !== undefined && it.price !== null) {
+                prefillPrices[name] = String(it.price);
+              }
+            });
+          });
+          if (Object.keys(prefillPrices).length > 0) {
+            setPrices(prev => ({ ...prefillPrices, ...prev }));
+          }
+          if (inv.display_currencies && inv.display_currencies.length > 0) {
+            setSendUsd(inv.display_currencies.includes("USD"));
+            setSendKhr(inv.display_currencies.includes("KHR"));
+          }
+        })
+        .catch(err => {
+          console.warn("Could not preload existing invoice data:", err);
+        });
+    }
+
     return () => {
       cancelled = true;
     };
-  }, [open, order.order_date]);
+  }, [open, order.order_date, order.order_id, order.has_invoice]);
 
   // Riel, rounded the same way the backend rounds it (nearest 100៛), so the
   // preview matches the invoice the group receives.
@@ -194,13 +223,19 @@ export function InvoiceModal({ open, onClose, order, onInvoiceSent }: InvoiceMod
       // Dishes whose name didn't match any price were billed at $0.00 — the
       // invoice is already sent, but the total is too low and every later
       // figure built on it (the Invoices page, the AI assistant) will be too.
+      invalidateInvoiceCache(order.order_id);
       if (result?.unpriced_items?.length) {
         toast(
           `Invoice sent, but ${result.unpriced_items.length} item(s) had no price and were billed at $0.00: ${result.unpriced_items.join(", ")}`,
           "error",
         );
       } else {
-        toast("Invoice shared successfully with Telegram group!", "success");
+        toast(
+          order.has_invoice
+            ? "Invoice updated and re-sent successfully to Telegram group!"
+            : "Invoice shared successfully with Telegram group!",
+          "success",
+        );
       }
       if (onInvoiceSent) onInvoiceSent();
       onClose();
@@ -217,7 +252,7 @@ export function InvoiceModal({ open, onClose, order, onInvoiceSent }: InvoiceMod
     <Modal
       open={open}
       onClose={onClose}
-      title="Generate & Share Invoice"
+      title={order.has_invoice ? "Update & Re-send Invoice" : "Generate & Share Invoice"}
       maxWidth="540px"
       footer={
         <div className="flex justify-between items-center w-full">
@@ -242,7 +277,7 @@ export function InvoiceModal({ open, onClose, order, onInvoiceSent }: InvoiceMod
               loading={sending}
               disabled={uniqueItems.length === 0 || (!sendUsd && !sendKhr)}
             >
-              <Send size={14} className="mr-1" /> Send Invoice
+              <Send size={14} className="mr-1" /> {order.has_invoice ? "Update & Re-send" : "Send Invoice"}
             </Button>
           </div>
         </div>

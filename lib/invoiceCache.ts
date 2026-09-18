@@ -30,6 +30,9 @@ export interface Invoice {
   last_sent_at: string;
   payer_qr_image?: string;
   payer_khqr_text?: string;
+  display_currencies?: string[];
+  usd_khr_rate?: number;
+  rate_date?: string;
 }
 
 interface CacheEntry {

@@ -26,6 +26,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { TopBar } from "@/components/layout/TopBar";
 import { DesktopHeader } from "@/components/layout/TopBar";
 import { InvoiceViewModal } from "@/components/orders/InvoiceViewModal";
+import { InvoiceModal } from "@/components/orders/InvoiceModal";
+import { type Order } from "@/components/orders/OrderItemsEditor";
 
 interface InvoiceRow {
   invoice_id: string;
@@ -102,6 +104,7 @@ export default function InvoicesPage() {
   const [totalCount, setTotalCount] = useState(0);
   const [stats, setStats] = useState({ orders: 0, amount: 0, amountKhr: 0 });
   const [viewId, setViewId] = useState<string | null>(null);
+  const [editingOrder, setEditingOrder] = useState<Order | null>(null);
 
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("all");
   const [fromDate, setFromDate] = useState("");
@@ -459,7 +462,27 @@ export default function InvoicesPage() {
         onClose={() => setViewId(null)}
         isAdmin={isAdmin}
         onResent={() => loadData(1, false)}
+        onEdit={async () => {
+          if (!viewId) return;
+          const targetId = viewId;
+          setViewId(null);
+          try {
+            const ord = await api.get<Order>(`/orders/${targetId}`);
+            if (ord) setEditingOrder(ord);
+          } catch (e: unknown) {
+            toast((e as Error).message || "Failed to load order for editing", "error");
+          }
+        }}
       />
+
+      {editingOrder && (
+        <InvoiceModal
+          open={!!editingOrder}
+          onClose={() => setEditingOrder(null)}
+          order={editingOrder}
+          onInvoiceSent={() => loadData(1, false)}
+        />
+      )}
     </div>
   );
 }

@@ -14,7 +14,8 @@ import {
   SlidersHorizontal,
   RefreshCw,
   Calendar,
-  MoreHorizontal
+  MoreHorizontal,
+  Trash2
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { chatIdQuery } from "@/lib/telegram";
@@ -23,6 +24,7 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { OrderItemsEditor, type Order } from "@/components/orders/OrderItemsEditor";
 import { InvoiceModal } from "@/components/orders/InvoiceModal";
@@ -62,7 +64,25 @@ export default function OrdersPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeInvoiceOrder, setActiveInvoiceOrder] = useState<Order | null>(null);
   const [viewInvoiceId, setViewInvoiceId] = useState<string | null>(null);
+  const [menuOpenPollId, setMenuOpenPollId] = useState<string | null>(null);
+  const [orderToDelete, setOrderToDelete] = useState<{ poll_id: string; title: string } | null>(null);
+  const [deletingOrder, setDeletingOrder] = useState(false);
   const dateInputRef = useRef<HTMLInputElement>(null);
+
+  const handleConfirmDelete = async () => {
+    if (!orderToDelete) return;
+    setDeletingOrder(true);
+    try {
+      await api.delete(`/orders/${orderToDelete.poll_id}`);
+      toast("Order deleted successfully", "success");
+      setOrderToDelete(null);
+      load(date);
+    } catch (e: unknown) {
+      toast((e as Error).message || "Failed to delete order", "error");
+    } finally {
+      setDeletingOrder(false);
+    }
+  };
 
   const openDatePicker = () => {
     const el = dateInputRef.current;
@@ -364,9 +384,48 @@ export default function OrdersPage() {
                     <span className="px-2.5 py-0.5 text-[10px] font-bold rounded-full bg-[var(--color-primary)]/10 text-[var(--color-primary)]">
                       {g.orders.reduce((s, o) => s + (o.items?.length ?? 0), 0)} Orders
                     </span>
-                    <button className="p-1 rounded hover:bg-black/5 dark:hover:bg-white/5 border-0 text-[var(--text-muted)] cursor-pointer">
-                      <MoreHorizontal size={14} />
-                    </button>
+                    {isAdmin && (
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setMenuOpenPollId(prev => prev === g.poll_id ? null : g.poll_id)}
+                          className="p-1 rounded hover:bg-black/5 dark:hover:bg-white/5 border-0 text-[var(--text-muted)] cursor-pointer"
+                          aria-label="Order actions"
+                        >
+                          <MoreHorizontal size={14} />
+                        </button>
+                        {menuOpenPollId === g.poll_id && (
+                          <>
+                            <div
+                              className="fixed inset-0 z-10"
+                              onClick={() => setMenuOpenPollId(null)}
+                            />
+                            <div className="absolute right-0 top-full mt-1 w-44 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] shadow-lg py-1 z-20">
+                              {!g.orders.some(o => o.has_invoice) ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setMenuOpenPollId(null);
+                                    setOrderToDelete({
+                                      poll_id: g.poll_id,
+                                      title: g.chat_title ? `Poll #${g.poll_id.slice(-6)} • ${g.chat_title}` : `Poll #${g.poll_id.slice(-6)}`,
+                                    });
+                                  }}
+                                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer transition-colors text-left"
+                                >
+                                  <Trash2 size={13} />
+                                  <span>Delete Order</span>
+                                </button>
+                              ) : (
+                                <div className="px-3 py-1.5 text-[11px] text-[var(--text-muted)] italic">
+                                  Invoice already generated
+                                </div>
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -409,7 +468,44 @@ export default function OrdersPage() {
         open={!!viewInvoiceId}
         onClose={() => setViewInvoiceId(null)}
         isAdmin={isAdmin}
+        onEdit={() => {
+          if (!viewInvoiceId) return;
+          const target = groups.flatMap(g => g.orders).find(o => o.order_id === viewInvoiceId);
+          const currentId = viewInvoiceId;
+          setViewInvoiceId(null);
+          if (target) {
+            setActiveInvoiceOrder(target);
+          } else {
+            api.get<Order>(`/orders/${currentId}`).then(ord => {
+              if (ord) setActiveInvoiceOrder(ord);
+            }).catch(console.error);
+          }
+        }}
+        onResent={() => load(date)}
       />
+
+      {/* Delete Un-invoiced Order Confirmation Dialog */}
+      {orderToDelete && (
+        <ConfirmDialog
+          open={!!orderToDelete}
+          onClose={() => setOrderToDelete(null)}
+          onConfirm={handleConfirmDelete}
+          loading={deletingOrder}
+          title="Delete Order"
+          variant="danger"
+          confirmText="Delete"
+          message={
+            <div>
+              <p className="font-semibold text-[var(--text)]">
+                Delete order for {orderToDelete.title}?
+              </p>
+              <p className="text-xs text-[var(--text-muted)] mt-1.5">
+                This order has not been invoiced yet. Deleting it will permanently remove the order snapshot.
+              </p>
+            </div>
+          }
+        />
+      )}
     </>
   );
 }

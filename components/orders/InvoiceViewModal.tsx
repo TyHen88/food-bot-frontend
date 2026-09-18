@@ -9,7 +9,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useToast } from "@/components/ui/Toast";
 import { api } from "@/lib/api";
 import { downloadInvoicePdf } from "@/lib/invoicePdf";
-import { Download, Send, Check, RotateCcw, Loader2 } from "lucide-react";
+import { Download, Send, Check, RotateCcw, Loader2, Edit2 } from "lucide-react";
 import { InvoicePdfDocument } from "./InvoicePdfDocument";
 
 import { 
@@ -31,12 +31,14 @@ export function InvoiceViewModal({
   onClose,
   isAdmin,
   onResent,
+  onEdit,
 }: {
   invoiceId: string | null;
   open: boolean;
   onClose: () => void;
   isAdmin: boolean;
   onResent?: () => void;
+  onEdit?: () => void;
 }) {
   const { toast } = useToast();
   const [invoice, setInvoice] = useState<Invoice | null>(null);
@@ -130,6 +132,16 @@ export function InvoiceViewModal({
       maxWidth="480px"
       footer={
         <>
+          {isAdmin && onEdit && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onEdit}
+              className="gap-1.5"
+            >
+              <Edit2 size={14} /> Edit & Re-send
+            </Button>
+          )}
           {isAdmin && (
             <Button
               variant="secondary"
