@@ -58,75 +58,116 @@ export const InvoicePdfDocument = forwardRef<HTMLDivElement, { invoice: Invoice 
         <div style={{ borderTop: `2px solid ${ink}`, margin: "16px 0" }} />
 
         {/* Per-person breakdown — bordered like the modal's divide-y list */}
-        {invoice.details.map((d, i) => (
-          <div
-            key={i}
-            style={{
-              padding: "10px 0",
-              borderTop: i > 0 ? `1px solid ${line}` : "none",
-            }}
-          >
-            <div style={{ fontWeight: 700, fontSize: "14px", marginBottom: "4px" }}>
-              ▪️ {d.user_name}
-            </div>
-            {(d.items ?? []).map((it, j) => (
-              <div
-                key={j}
-                style={{ display: "flex", justifyContent: "space-between", gap: "12px", padding: "2px 0 2px 16px" }}
-              >
-                <span style={{ flex: 1 }}>• {it.item_name} ×{it.qty}</span>
-                <span style={{ fontVariantNumeric: "tabular-nums" }}>
-                  ${(it.cost ?? 0).toFixed(2)}
-                </span>
+        {invoice.details.map((d, i) => {
+          const isPayerSelf = Boolean(
+            (invoice.payer_user_id && d.user_id && String(invoice.payer_user_id).trim() === String(d.user_id).trim()) ||
+            (invoice.payer_name && d.user_name && invoice.payer_name.trim().toLowerCase() === d.user_name.trim().toLowerCase())
+          );
+
+          return (
+            <div
+              key={i}
+              style={{
+                padding: "10px 0",
+                borderTop: i > 0 ? `1px solid ${line}` : "none",
+              }}
+            >
+              <div style={{ fontWeight: 700, fontSize: "14px", marginBottom: "4px" }}>
+                ▪️ {d.user_name} {isPayerSelf ? "(Payer)" : ""}
               </div>
-            ))}
-            {(d.items ?? []).length > 1 && (
+              {(d.items ?? []).map((it, j) => (
+                <div
+                  key={j}
+                  style={{ display: "flex", justifyContent: "space-between", gap: "12px", padding: "2px 0 2px 16px" }}
+                >
+                  <span style={{ flex: 1 }}>• {it.item_name} ×{it.qty}</span>
+                  <span style={{ fontVariantNumeric: "tabular-nums" }}>
+                    ${(it.cost ?? 0).toFixed(2)}
+                  </span>
+                </div>
+              ))}
+              {(d.items ?? []).length > 1 && (
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    padding: "4px 0 0 16px",
+                    marginTop: "4px",
+                    borderTop: `1px solid ${line}`,
+                    fontWeight: 600,
+                  }}
+                >
+                  <span>Subtotal</span>
+                  <span style={{ fontVariantNumeric: "tabular-nums" }}>
+                    ${(d.subtotal ?? 0).toFixed(2)}
+                  </span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* Total band */}
+        {(() => {
+          const restaurantTotal = invoice.details.reduce((sum, d) => sum + (d.subtotal || 0), 0);
+          const payerSelfAmount = invoice.details
+            .filter((d) =>
+              (invoice.payer_user_id && d.user_id && String(invoice.payer_user_id).trim() === String(d.user_id).trim()) ||
+              (invoice.payer_name && d.user_name && invoice.payer_name.trim().toLowerCase() === d.user_name.trim().toLowerCase())
+            )
+            .reduce((sum, d) => sum + (d.subtotal || 0), 0);
+
+          const totalDueToPayer = payerSelfAmount > 0 
+            ? Math.max(0, restaurantTotal - payerSelfAmount)
+            : (invoice.total ?? restaurantTotal);
+
+          return (
+            <div
+              style={{
+                background: brandBg,
+                borderRadius: "8px",
+                padding: "14px 18px",
+                marginTop: "8px",
+              }}
+            >
+              {payerSelfAmount > 0 && (
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    color: gray,
+                    fontWeight: 600,
+                    fontSize: "13px",
+                    marginBottom: "4px",
+                  }}
+                >
+                  <span>🧾 Order Total (Restaurant)</span>
+                  <span style={{ fontVariantNumeric: "tabular-nums" }}>
+                    ${restaurantTotal.toFixed(2)}
+                  </span>
+                </div>
+              )}
               <div
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
-                  padding: "4px 0 0 16px",
-                  marginTop: "4px",
-                  borderTop: `1px solid ${line}`,
-                  fontWeight: 600,
+                  color: brand,
+                  fontWeight: 700,
+                  fontSize: "18px",
                 }}
               >
-                <span>Subtotal</span>
+                <span>💰 Total Due {payerSelfAmount > 0 ? "to Payer" : ""}</span>
                 <span style={{ fontVariantNumeric: "tabular-nums" }}>
-                  ${(d.subtotal ?? 0).toFixed(2)}
+                  ${totalDueToPayer.toFixed(2)}
                 </span>
               </div>
-            )}
-          </div>
-        ))}
-
-        {/* Total band */}
-        <div
-          style={{
-            background: brandBg,
-            borderRadius: "8px",
-            padding: "14px 18px",
-            marginTop: "8px",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              color: brand,
-              fontWeight: 700,
-              fontSize: "18px",
-            }}
-          >
-            <span>💰 Total Due</span>
-            <span style={{ fontVariantNumeric: "tabular-nums" }}>
-              ${(invoice.total ?? 0).toFixed(2)}
-            </span>
-          </div>
-          <div style={{ color: brand, fontSize: "13px", marginTop: "4px" }}>
-            💳 Pay to <b>{invoice.payer_name || "—"}</b>
-          </div>
-        </div>
+              <div style={{ color: brand, fontSize: "13px", marginTop: "4px" }}>
+                💳 Pay to <b>{invoice.payer_name || "—"}</b>
+                {payerSelfAmount > 0 && ` (excluding $${payerSelfAmount.toFixed(2)} payer's own order)`}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Payer QR */}
         {invoice.payer_qr_image && (

@@ -189,78 +189,118 @@ export function InvoiceViewModal({
           {/* Per-person breakdown */}
           <div className="divide-y rounded-[var(--radius-md)] border overflow-hidden"
             style={{ borderColor: "var(--border)" }}>
-            {invoice.details.map((d, i) => (
-              <div key={i} className="px-3 py-2" style={{ background: "var(--surface)" }}>
-                <div className="flex items-center justify-between gap-2 mb-1">
-                  <p className="text-xs font-bold" style={{ color: "var(--text)" }}>
-                    ▪️ {d.user_name}
-                  </p>
-                  <div className="flex items-center gap-1.5">
-                    {d.paid ? (
-                      <Badge variant="success" className="text-[10px] py-0 px-1.5">✓ Paid</Badge>
-                    ) : (
-                      <Badge variant="danger" className="text-[10px] py-0 px-1.5">Unpaid</Badge>
-                    )}
-                    {isAdmin && (
-                      <button
-                        type="button"
-                        disabled={updatingPersonIndex === i}
-                        onClick={() => setConfirmPerson({ index: i, detail: d })}
-                        className={`px-1.5 py-0.5 text-[9px] font-bold rounded flex items-center gap-1 cursor-pointer transition-all ${
-                          d.paid
-                            ? "bg-[var(--surface-2)] text-[var(--text-muted)] hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-[var(--border)]"
-                            : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm"
-                        }`}
-                        title={d.paid ? "Unmark as paid" : "Mark as paid"}
-                      >
-                        {updatingPersonIndex === i ? (
-                          <Loader2 size={9} className="animate-spin" />
-                        ) : d.paid ? (
-                          <>
-                            <RotateCcw size={9} /> Unmark
-                          </>
-                        ) : (
-                          <>
-                            <Check size={9} /> Mark Paid
-                          </>
-                        )}
-                      </button>
-                    )}
+            {invoice.details.map((d, i) => {
+              const isPayerSelf = Boolean(
+                (invoice.payer_user_id && d.user_id && String(invoice.payer_user_id).trim() === String(d.user_id).trim()) ||
+                (invoice.payer_name && d.user_name && invoice.payer_name.trim().toLowerCase() === d.user_name.trim().toLowerCase())
+              );
+              const isPaid = d.paid || isPayerSelf;
+
+              return (
+                <div key={i} className="px-3 py-2" style={{ background: "var(--surface)" }}>
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <p className="text-xs font-bold" style={{ color: "var(--text)" }}>
+                        ▪️ {d.user_name}
+                      </p>
+                      {isPayerSelf && (
+                        <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                          (Payer)
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {isPayerSelf ? (
+                        <Badge variant="success" className="text-[10px] py-0 px-1.5 font-bold">✓ Paid (Payer)</Badge>
+                      ) : isPaid ? (
+                        <Badge variant="success" className="text-[10px] py-0 px-1.5">✓ Paid</Badge>
+                      ) : (
+                        <Badge variant="danger" className="text-[10px] py-0 px-1.5">Unpaid</Badge>
+                      )}
+                      {isAdmin && !isPayerSelf && (
+                        <button
+                          type="button"
+                          disabled={updatingPersonIndex === i}
+                          onClick={() => setConfirmPerson({ index: i, detail: d })}
+                          className={`px-1.5 py-0.5 text-[9px] font-bold rounded flex items-center gap-1 cursor-pointer transition-all ${
+                            d.paid
+                              ? "bg-[var(--surface-2)] text-[var(--text-muted)] hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-[var(--border)]"
+                              : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm"
+                          }`}
+                          title={d.paid ? "Unmark as paid" : "Mark as paid"}
+                        >
+                          {updatingPersonIndex === i ? (
+                            <Loader2 size={9} className="animate-spin" />
+                          ) : d.paid ? (
+                            <>
+                              <RotateCcw size={9} /> Unmark
+                            </>
+                          ) : (
+                            <>
+                              <Check size={9} /> Mark Paid
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
                   </div>
+                  {(d.items ?? []).map((it, j) => (
+                    <div key={j} className="flex items-center justify-between gap-2 text-xs py-0.5">
+                      <span className="truncate flex-1" style={{ color: "var(--text-2)" }}>
+                        • {it.item_name} ×{it.qty}
+                      </span>
+                      <span className="font-mono shrink-0" style={{ color: "var(--text)" }}>
+                        ${(it.cost ?? 0).toFixed(2)}
+                      </span>
+                    </div>
+                  ))}
+                  {(d.items ?? []).length > 1 && (
+                    <div className="flex items-center justify-between text-xs pt-1 font-semibold"
+                      style={{ color: "var(--text)" }}>
+                      <span>Subtotal</span>
+                      <span className="font-mono">${(d.subtotal ?? 0).toFixed(2)}</span>
+                    </div>
+                  )}
                 </div>
-                {(d.items ?? []).map((it, j) => (
-                  <div key={j} className="flex items-center justify-between gap-2 text-xs py-0.5">
-                    <span className="truncate flex-1" style={{ color: "var(--text-2)" }}>
-                      • {it.item_name} ×{it.qty}
-                    </span>
-                    <span className="font-mono shrink-0" style={{ color: "var(--text)" }}>
-                      ${(it.cost ?? 0).toFixed(2)}
-                    </span>
-                  </div>
-                ))}
-                {(d.items ?? []).length > 1 && (
-                  <div className="flex items-center justify-between text-xs pt-1 font-semibold"
-                    style={{ color: "var(--text)" }}>
-                    <span>Subtotal</span>
-                    <span className="font-mono">${(d.subtotal ?? 0).toFixed(2)}</span>
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Total block */}
-          <div className="rounded-[var(--radius-md)] px-3 py-2 space-y-1"
-            style={{ background: "var(--color-primary-light)" }}>
-            <div className="flex items-center justify-between text-sm font-bold"
-              style={{ color: "var(--color-primary)" }}>
-              <span>💰 Total Due</span>
-              <span className="font-mono">${(invoice.total ?? 0).toFixed(2)}</span>
-            </div>
-            <p className="text-xs" style={{ color: "var(--color-primary)" }}>
-              💳 Pay to <span className="font-semibold">{invoice.payer_name || "—"}</span>
-            </p>
-          </div>
+          {(() => {
+            const restaurantTotal = invoice.details.reduce((sum, d) => sum + (d.subtotal || 0), 0);
+            const payerSelfAmount = invoice.details
+              .filter((d) =>
+                (invoice.payer_user_id && d.user_id && String(invoice.payer_user_id).trim() === String(d.user_id).trim()) ||
+                (invoice.payer_name && d.user_name && invoice.payer_name.trim().toLowerCase() === d.user_name.trim().toLowerCase())
+              )
+              .reduce((sum, d) => sum + (d.subtotal || 0), 0);
+
+            const totalDueToPayer = payerSelfAmount > 0 
+              ? Math.max(0, restaurantTotal - payerSelfAmount)
+              : (invoice.total ?? restaurantTotal);
+
+            return (
+              <div className="rounded-[var(--radius-md)] px-3 py-2 space-y-1.5"
+                style={{ background: "var(--color-primary-light)" }}>
+                {payerSelfAmount > 0 && (
+                  <div className="flex items-center justify-between text-xs font-semibold text-[var(--text-muted)] border-b border-[var(--color-primary)]/20 pb-1">
+                    <span>🧾 Order Total (Restaurant)</span>
+                    <span className="font-mono">${restaurantTotal.toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between text-sm font-bold"
+                  style={{ color: "var(--color-primary)" }}>
+                  <span>💰 Total Due {payerSelfAmount > 0 ? "to Payer" : ""}</span>
+                  <span className="font-mono">${totalDueToPayer.toFixed(2)}</span>
+                </div>
+                <p className="text-xs" style={{ color: "var(--color-primary)" }}>
+                  💳 Pay to <span className="font-semibold">{invoice.payer_name || "—"}</span>
+                  {payerSelfAmount > 0 && ` (excluding $${payerSelfAmount.toFixed(2)} payer's own order)`}
+                </p>
+              </div>
+            );
+          })()}
 
           {/* Payment QR / KHQR block if available */}
           {(invoice.payer_qr_image || invoice.payer_khqr_text) && (

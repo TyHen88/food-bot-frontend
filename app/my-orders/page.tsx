@@ -13,7 +13,12 @@ import {
   DollarSign,
   Landmark,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Coins,
+  Receipt,
+  Share2,
+  Copy,
+  Users
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { chatIdQuery } from "@/lib/telegram";
@@ -54,6 +59,31 @@ interface InvoiceRow {
   my_amount_khr?: number | null;
   usd_khr_rate?: number;
   my_items?: InvoiceDetailItem[];
+  is_payer?: boolean;
+  payer_unpaid_amount?: number;
+  payer_total_to_collect?: number;
+  payer_unpaid_count?: number;
+  unpaid_members?: UnpaidMemberInfo[];
+}
+
+interface UnpaidMemberInfo {
+  user_id: string;
+  user_name: string;
+  due: number;
+  items: InvoiceDetailItem[];
+}
+
+interface PayerOrderRecord {
+  order_id: string;
+  order_date: string;
+  chat_title?: string;
+  total: number;
+  totalToCollect: number;
+  collectedUSD: number;
+  uncollectedUSD: number;
+  uncollectedKHR: number;
+  progressPct: number;
+  unpaidMembers: UnpaidMemberInfo[];
 }
 
 interface ExchangeRateData {
@@ -88,11 +118,12 @@ function toKhr(usd: number, rate = 4047, rounding = 100): number {
 
 /** Format KHR with thousands separator and riel symbol */
 function formatKhr(amount: number): string {
+  if (isNaN(amount) || amount === null || amount === undefined) return "0៛";
   return `${Math.round(amount).toLocaleString("en-US")}៛`;
 }
 
 export default function MyOrdersPage() {
-  const { user, profile, isAdmin, loading: authLoading } = useAuth();
+  const { user, profile, loading: authLoading } = useAuth();
   const { toast } = useToast();
 
   const [orders, setOrders] = useState<Order[]>([]);
@@ -213,7 +244,7 @@ export default function MyOrdersPage() {
     }
   }
 
-  // Filter orders by date, and filter items ONLY to user's items
+  // Filter orders by date, and keep orders containing my dishes OR where I was the payer
   const myFilteredOrders = useMemo(() => {
     return orders
       .filter((ord) => {
@@ -222,15 +253,14 @@ export default function MyOrdersPage() {
         return true;
       })
       .map((ord) => {
-        // Keep ONLY my items in this order
         const myItems = (ord.items || []).filter(isMyItem);
         return {
           ...ord,
           myItems,
         };
       })
-      .filter((ord) => ord.myItems.length > 0);
-  }, [orders, fromDate, toDate, isMyItem]);
+      .filter((ord) => ord.myItems.length > 0 || isMyIdentity(ord.paid_by?.user_id, ord.paid_by?.username));
+  }, [orders, fromDate, toDate, isMyItem, isMyIdentity]);
 
   // Pagination state & Infinite Scroll
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
@@ -262,7 +292,7 @@ export default function MyOrdersPage() {
     return map;
   }, [invoices]);
 
-  // Calculate my spend, paid, unpaid debt, item counts, and payer breakdown in USD & KHR
+  // Calculate my spend, my debts to other payers, and what group members owe me (as payer)
   const statistics = useMemo(() => {
     let totalSpendUSD = 0;
     let totalPaidUSD = 0;
@@ -276,6 +306,9 @@ export default function MyOrdersPage() {
     let paidOrdersCount = 0;
     let unpaidOrdersCount = 0;
 
+    let totalReceivablesUSD = 0;
+    let totalReceivablesKHR = 0;
+
     const activeRate = rateInfo?.usd_khr && rateInfo.usd_khr > 0 ? rateInfo.usd_khr : 4047;
     const rounding = rateInfo?.khr_rounding || 100;
 
@@ -288,33 +321,37 @@ export default function MyOrdersPage() {
       unpaidCount: number;
     }>();
 
+    // 1. Process orders where I ate food
     myFilteredOrders.forEach((ord) => {
       const inv = invoiceMapByOrderId.get(ord.order_id);
+      const isMeThePayer = isMyIdentity(ord.paid_by?.user_id, ord.paid_by?.username) || Boolean(inv?.is_payer);
       const payerName = inv?.payer_name || ord.paid_by?.username || "Unknown Payer";
 
-      // Pinned rate from invoice or active NBC system rate
       const orderRate = inv?.usd_khr_rate && inv.usd_khr_rate > 0 ? inv.usd_khr_rate : activeRate;
 
-      // Check if invoice detail is cached in memory
       const cachedInv = getInvoiceFromCache(ord.order_id) || (inv?.invoice_id ? getInvoiceFromCache(inv.invoice_id) : undefined);
       let orderMyAmountUSD = 0;
       let orderIsPaid = false;
 
       if (inv?.my_amount !== undefined && inv.my_amount > 0) {
         orderMyAmountUSD = inv.my_amount;
-        orderIsPaid = Boolean(inv.my_paid);
+        orderIsPaid = isMeThePayer || Boolean(inv.my_paid);
       } else if (cachedInv?.details) {
         const myDetail = cachedInv.details.find((d) => isMyIdentity(d.user_id, d.user_name));
         if (myDetail) {
           orderMyAmountUSD = myDetail.subtotal;
-          orderIsPaid = Boolean(myDetail.paid);
+          orderIsPaid = isMeThePayer || Boolean(myDetail.paid);
         }
       } else if (inv?.my_items?.length) {
         orderMyAmountUSD = inv.my_items.reduce((sum, item) => sum + (item.cost || (item.price * (item.qty || 1))), 0);
-        orderIsPaid = Boolean(inv.my_paid);
+        orderIsPaid = isMeThePayer || Boolean(inv.my_paid);
       }
 
-      // KHR equivalent calculation
+      // If user is the payer, their own food was paid by themselves upfront
+      if (isMeThePayer) {
+        orderIsPaid = true;
+      }
+
       const orderMyAmountKHR = (inv?.my_amount_khr && inv.my_amount_khr > 0)
         ? inv.my_amount_khr
         : toKhr(orderMyAmountUSD, orderRate, rounding);
@@ -334,25 +371,58 @@ export default function MyOrdersPage() {
         }
       }
 
-      const orderItemQty = ord.myItems.reduce((acc, it) => acc + (Number(it.qty) || 1), 0);
+      const orderItemQty = (ord.myItems || []).reduce((acc, it) => acc + (Number(it.qty) || 1), 0);
       totalItemsCount += orderItemQty;
 
-      // Group by who paid
-      const currentPayer = paidByMap.get(payerName) || { 
-        totalUSD: 0, 
-        totalKHR: 0, 
-        count: 0,
-        unpaidUSD: 0,
-        unpaidKHR: 0,
-        unpaidCount: 0
-      };
-      paidByMap.set(payerName, {
-        totalUSD: currentPayer.totalUSD + orderMyAmountUSD,
-        totalKHR: currentPayer.totalKHR + orderMyAmountKHR,
-        count: currentPayer.count + 1,
-        unpaidUSD: currentPayer.unpaidUSD + (ord.has_invoice && !orderIsPaid ? orderMyAmountUSD : 0),
-        unpaidKHR: currentPayer.unpaidKHR + (ord.has_invoice && !orderIsPaid ? orderMyAmountKHR : 0),
-        unpaidCount: currentPayer.unpaidCount + (ord.has_invoice && !orderIsPaid ? 1 : 0),
+      // Group by who paid (debt to payers)
+      if (!isMeThePayer && payerName) {
+        const currentPayer = paidByMap.get(payerName) || { 
+          totalUSD: 0, 
+          totalKHR: 0, 
+          count: 0,
+          unpaidUSD: 0,
+          unpaidKHR: 0,
+          unpaidCount: 0
+        };
+        paidByMap.set(payerName, {
+          totalUSD: currentPayer.totalUSD + orderMyAmountUSD,
+          totalKHR: currentPayer.totalKHR + orderMyAmountKHR,
+          count: currentPayer.count + 1,
+          unpaidUSD: currentPayer.unpaidUSD + (ord.has_invoice && !orderIsPaid ? orderMyAmountUSD : 0),
+          unpaidKHR: currentPayer.unpaidKHR + (ord.has_invoice && !orderIsPaid ? orderMyAmountKHR : 0),
+          unpaidCount: currentPayer.unpaidCount + (ord.has_invoice && !orderIsPaid ? 1 : 0),
+        });
+      }
+    });
+
+    // 2. Process orders where I AM THE PAYER (Receivables from members)
+    const payerOrdersList: PayerOrderRecord[] = [];
+
+    invoices.forEach((inv) => {
+      const isMePayer = Boolean(inv.is_payer) || isMyIdentity(inv.payer_user_id, inv.payer_name);
+      if (!isMePayer) return;
+
+      const orderRate = inv.usd_khr_rate && inv.usd_khr_rate > 0 ? inv.usd_khr_rate : activeRate;
+      const uncollected = inv.payer_unpaid_amount ?? 0;
+      const toCollect = inv.payer_total_to_collect ?? (inv.total || 0);
+      const collected = Math.max(0, toCollect - uncollected);
+      const progress = toCollect > 0 ? Math.min(100, Math.round((collected / toCollect) * 100)) : 100;
+      const uncollectedKHR = toKhr(uncollected, orderRate, rounding);
+
+      totalReceivablesUSD += uncollected;
+      totalReceivablesKHR += uncollectedKHR;
+
+      payerOrdersList.push({
+        order_id: inv.order_id,
+        order_date: inv.order_date,
+        chat_title: inv.chat_title,
+        total: inv.total || 0,
+        totalToCollect: toCollect,
+        collectedUSD: collected,
+        uncollectedUSD: uncollected,
+        uncollectedKHR: uncollectedKHR,
+        progressPct: progress,
+        unpaidMembers: inv.unpaid_members || [],
       });
     });
 
@@ -373,16 +443,38 @@ export default function MyOrdersPage() {
       totalSpendKHR,
       totalPaidKHR,
       totalUnpaidKHR,
+      totalReceivablesUSD,
+      totalReceivablesKHR,
       totalOrdersCount: myFilteredOrders.length,
       paidOrdersCount,
       unpaidOrdersCount,
       totalItemsCount,
       paidByList,
+      payerOrdersList,
       rateUsed: activeRate,
       rateDisplay: rateInfo?.display || `${activeRate.toLocaleString()} KHR / USD`,
       rateDate: rateInfo?.rate_date || rateInfo?.today,
     };
-  }, [myFilteredOrders, invoiceMapByOrderId, isMyIdentity, rateInfo]);
+  }, [myFilteredOrders, invoiceMapByOrderId, isMyIdentity, rateInfo, invoices]);
+
+  // Copy Telegram reminder message for unpaid members
+  const handleCopyReminder = (pOrd: PayerOrderRecord) => {
+    if (!pOrd.unpaidMembers || pOrd.unpaidMembers.length === 0) return;
+    const myName = profile?.full_name || profile?.username || user?.first_name || "the payer";
+    const dateFormatted = format(new Date(pOrd.order_date + "T00:00:00"), "d MMM yyyy");
+    const lines = [
+      `📢 Lunch Payment Reminder (${dateFormatted})`,
+      `Please scan KHQR to settle with ${myName}:`,
+    ];
+    pOrd.unpaidMembers.forEach((m: UnpaidMemberInfo) => {
+      lines.push(`• ${m.user_name}: $${m.due.toFixed(2)} (${formatKhr(toKhr(m.due, statistics.rateUsed))})`);
+    });
+    lines.push("Thank you! 🙏");
+    navigator.clipboard.writeText(lines.join("\n")).then(
+      () => toast("Payment reminder copied to clipboard! Paste in Telegram.", "success"),
+      () => toast("Failed to copy reminder", "error")
+    );
+  };
 
   return (
     <div className="min-h-screen pb-24 md:pb-8">
@@ -434,7 +526,7 @@ export default function MyOrdersPage() {
               title="Refresh"
               className="shrink-0 w-9 h-9 p-0 flex items-center justify-center rounded-[var(--radius-md)] hover:bg-[var(--surface-2)] active:scale-95 transition-all"
             >
-              <RefreshCw size={19} className={loading ? "animate-spin text-[var(--color-primary)]" : "text-[var(--text-2)]"} />
+              <RefreshCw size={16} className={loading ? "animate-spin text-[var(--color-primary)]" : "text-[var(--text-2)]"} />
             </Button>
           </div>
 
@@ -449,7 +541,6 @@ export default function MyOrdersPage() {
                   setFromDate(e.target.value);
                   setQuickFilter("custom");
                 }}
-                aria-label="From Date"
                 className="w-full pl-8 pr-2 py-1 text-xs rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:border-[var(--color-primary)] cursor-pointer h-8"
               />
             </div>
@@ -462,185 +553,305 @@ export default function MyOrdersPage() {
                   setToDate(e.target.value);
                   setQuickFilter("custom");
                 }}
-                aria-label="To Date"
                 className="w-full pl-8 pr-2 py-1 text-xs rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:border-[var(--color-primary)] cursor-pointer h-8"
               />
             </div>
           </div>
         </Card>
 
-        {/* 2. Separate 2 Cards: USD ($) and KHR (៛) with Live Exchange Rate */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-          {/* Card 1: USD Overview */}
-          <Card variant="default" padding="sm" className="space-y-2 border border-[var(--border)]">
-            <div className="flex items-center justify-between border-b border-[var(--border)] pb-1.5">
+        {/* 2. Redesigned Financial Overview: I Owe vs Owed to Me vs Food Spend */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+          {/* Card 1: I Owe (Debts to other payers) */}
+          <Card 
+            variant="default" 
+            padding="sm" 
+            className={`space-y-1.5 border transition-all ${
+              statistics.totalUnpaidUSD > 0.009
+                ? "bg-rose-500/5 dark:bg-rose-500/10 border-rose-500/30"
+                : "border-[var(--border)]"
+            }`}
+          >
+            <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
-                <div className="w-6 h-6 rounded-[var(--radius-sm)] bg-[var(--color-primary-light)] text-[var(--color-primary)] flex items-center justify-center font-bold text-xs">
-                  <DollarSign size={13} />
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center ${
+                  statistics.totalUnpaidUSD > 0.009
+                    ? "bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400"
+                    : "bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400"
+                }`}>
+                  {statistics.totalUnpaidUSD > 0.009 ? <AlertCircle size={14} /> : <CheckCircle2 size={14} />}
                 </div>
-                <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
-                  USD Summary ($)
-                </span>
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] block leading-none">
+                    I Owe (To Payers)
+                  </span>
+                  <span className="text-[10px] text-[var(--text-muted)]">
+                    {statistics.totalUnpaidUSD > 0.009 ? `${statistics.unpaidOrdersCount} unpaid order(s)` : "All settled"}
+                  </span>
+                </div>
               </div>
-              <span className="text-sm font-extrabold text-[var(--color-primary)]">
-                ${statistics.totalSpendUSD.toFixed(2)}
-              </span>
+              <Badge 
+                variant={statistics.totalUnpaidUSD > 0.009 ? "danger" : "success"} 
+                className="text-[9px] px-1.5 py-0.2"
+              >
+                {statistics.totalUnpaidUSD > 0.009 ? "Unpaid" : "✓ Clear"}
+              </Badge>
             </div>
-
-            <div className="grid grid-cols-2 gap-2 pt-0.5">
-              <div className="px-3 py-2 rounded-[var(--radius-sm)] bg-emerald-500/10 dark:bg-emerald-500/15 border border-emerald-500/20">
-                <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
-                  <CheckCircle2 size={12} className="text-emerald-600 dark:text-emerald-400" /> Total Paid
-                </div>
-                <div className="text-sm font-extrabold text-emerald-700 dark:text-emerald-300 mt-1">
-                  ${statistics.totalPaidUSD.toFixed(2)}
-                </div>
-                <div className="text-[10px] font-medium text-emerald-700/80 dark:text-emerald-400/80 mt-0.5">
-                  {statistics.paidOrdersCount} {statistics.paidOrdersCount === 1 ? "order" : "orders"} paid
-                </div>
+            <div className="pt-1">
+              <div className="text-xl font-extrabold text-[var(--text)] font-mono">
+                ${statistics.totalUnpaidUSD.toFixed(2)}
               </div>
-
-              <div className={`px-3 py-2 rounded-[var(--radius-sm)] border transition-all ${
-                statistics.totalUnpaidUSD > 0.009 
-                  ? "bg-rose-500/10 dark:bg-rose-500/15 border-rose-500/30" 
-                  : "bg-[var(--surface-2)] border-[var(--border)]"
-              }`}>
-                <div className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider ${
-                  statistics.totalUnpaidUSD > 0.009 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"
-                }`}>
-                  <AlertCircle size={12} className={statistics.totalUnpaidUSD > 0.009 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"} /> Unpaid Debt
-                </div>
-                <div className={`text-sm font-extrabold mt-1 ${
-                  statistics.totalUnpaidUSD > 0.009 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"
-                }`}>
-                  ${statistics.totalUnpaidUSD.toFixed(2)}
-                </div>
-                <div className={`text-[10px] mt-0.5 ${
-                  statistics.totalUnpaidUSD > 0.009 ? "text-rose-700/90 dark:text-rose-400/90 font-semibold" : "text-[var(--text-muted)] font-medium"
-                }`}>
-                  {statistics.unpaidOrdersCount > 0 ? `${statistics.unpaidOrdersCount} unpaid` : "All settled"}
-                </div>
+              <div className="text-xs font-semibold text-[var(--text-muted)] font-mono">
+                ≈ {formatKhr(statistics.totalUnpaidKHR)}
               </div>
             </div>
           </Card>
 
-          {/* Card 2: KHR Overview */}
-          <Card variant="default" padding="sm" className="space-y-2 border border-[var(--border)]">
-            <div className="flex items-center justify-between border-b border-[var(--border)] pb-1.5">
+          {/* Card 2: Owed to Me (Payer Receivables) */}
+          <Card 
+            variant="default" 
+            padding="sm" 
+            className={`space-y-1.5 border transition-all ${
+              statistics.totalReceivablesUSD > 0.009
+                ? "bg-amber-500/5 dark:bg-amber-500/10 border-amber-500/30"
+                : "border-[var(--border)]"
+            }`}
+          >
+            <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
-                <div className="w-6 h-6 rounded-[var(--radius-sm)] bg-[var(--color-accent-light)] text-[var(--color-accent)] flex items-center justify-center font-bold text-xs">
-                  <Landmark size={13} />
+                <div className="w-7 h-7 rounded-full flex items-center justify-center bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300">
+                  <Coins size={14} />
                 </div>
-                <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
-                  KHR Summary (៛)
-                </span>
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] block leading-none">
+                    Owed to Me (Payer)
+                  </span>
+                  <span className="text-[10px] text-[var(--text-muted)]">
+                    {statistics.totalReceivablesUSD > 0.009 ? "Waiting for members" : "No pending collections"}
+                  </span>
+                </div>
               </div>
-              <span className="text-sm font-extrabold text-[var(--color-accent)]">
-                {formatKhr(statistics.totalSpendKHR)}
+              <Badge 
+                variant={statistics.totalReceivablesUSD > 0.009 ? "warning" : "default"} 
+                className="text-[9px] px-1.5 py-0.2"
+              >
+                {statistics.totalReceivablesUSD > 0.009 ? "Collecting" : "Settled"}
+              </Badge>
+            </div>
+            <div className="pt-1">
+              <div className="text-xl font-extrabold text-amber-600 dark:text-amber-400 font-mono">
+                ${statistics.totalReceivablesUSD.toFixed(2)}
+              </div>
+              <div className="text-xs font-semibold text-[var(--text-muted)] font-mono">
+                ≈ {formatKhr(statistics.totalReceivablesKHR)}
+              </div>
+            </div>
+          </Card>
+
+          {/* Card 3: Food Spending */}
+          <Card variant="default" padding="sm" className="space-y-1.5 border border-[var(--border)] sm:col-span-2 lg:col-span-1">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <div className="w-7 h-7 rounded-full flex items-center justify-center bg-[var(--color-primary-light)] text-[var(--color-primary)]">
+                  <ShoppingBag size={14} />
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] block leading-none">
+                    Total Food Spend
+                  </span>
+                  <span className="text-[10px] text-[var(--text-muted)]">
+                    {statistics.totalItemsCount} dishes in {statistics.totalOrdersCount} orders
+                  </span>
+                </div>
+              </div>
+              <span className="text-[10px] text-[var(--text-muted)] font-mono">
+                {statistics.rateDisplay}
               </span>
             </div>
-
-            <div className="grid grid-cols-2 gap-2 pt-0.5">
-              <div className="px-3 py-2 rounded-[var(--radius-sm)] bg-emerald-500/10 dark:bg-emerald-500/15 border border-emerald-500/20">
-                <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
-                  <CheckCircle2 size={12} className="text-emerald-600 dark:text-emerald-400" /> Total Paid
-                </div>
-                <div className="text-sm font-extrabold text-emerald-700 dark:text-emerald-300 mt-1">
-                  {formatKhr(statistics.totalPaidKHR)}
-                </div>
-                <div className="text-[10px] font-medium text-emerald-700/80 dark:text-emerald-400/80 mt-0.5">
-                  {statistics.paidOrdersCount} {statistics.paidOrdersCount === 1 ? "order" : "orders"} paid
-                </div>
+            <div className="pt-1">
+              <div className="text-xl font-extrabold text-[var(--color-primary)] font-mono">
+                ${statistics.totalSpendUSD.toFixed(2)}
               </div>
-
-              <div className={`px-3 py-2 rounded-[var(--radius-sm)] border transition-all ${
-                statistics.totalUnpaidKHR > 0.009 
-                  ? "bg-rose-500/10 dark:bg-rose-500/15 border-rose-500/30" 
-                  : "bg-[var(--surface-2)] border-[var(--border)]"
-              }`}>
-                <div className={`flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider ${
-                  statistics.totalUnpaidKHR > 0.009 ? "text-rose-700 dark:text-rose-400" : "text-emerald-700 dark:text-emerald-400"
-                }`}>
-                  <AlertCircle size={12} className={statistics.totalUnpaidKHR > 0.009 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"} /> Unpaid Debt
-                </div>
-                <div className={`text-sm font-extrabold mt-1 ${
-                  statistics.totalUnpaidKHR > 0.009 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"
-                }`}>
-                  {formatKhr(statistics.totalUnpaidKHR)}
-                </div>
-                <div className={`text-[10px] mt-0.5 ${
-                  statistics.totalUnpaidKHR > 0.009 ? "text-rose-700/90 dark:text-rose-400/90 font-semibold" : "text-[var(--text-muted)] font-medium"
-                }`}>
-                  {statistics.unpaidOrdersCount > 0 ? `${statistics.unpaidOrdersCount} unpaid` : "All settled"}
-                </div>
+              <div className="text-xs font-semibold text-[var(--text-muted)] font-mono">
+                ≈ {formatKhr(statistics.totalSpendKHR)}
               </div>
-            </div>
-
-            {/* Exchange Rate Badge */}
-            <div className="flex items-center justify-between text-[10px] text-[var(--text-muted)] pt-0.5">
-              <span>🏦 NBC Official Rate</span>
-              <span className="font-semibold text-[var(--text-2)]">{statistics.rateDisplay}</span>
             </div>
           </Card>
         </div>
 
-        {/* 3. Secondary Stats & Paid By Aggregation Card */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-          {/* Dishes & Order Counts */}
-          <Card variant="flat" padding="sm" className="flex items-center gap-2.5 border border-[var(--border)]">
-            <div className="w-8 h-8 rounded-[var(--radius-md)] bg-[var(--color-primary-light)] text-[var(--color-primary)] flex items-center justify-center flex-shrink-0">
-              <Utensils size={15} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-xs font-bold text-[var(--text)] truncate">
-                {statistics.totalItemsCount} dishes
+        {/* 3. Payer Hub: Orders where I am the Payer (Collecting from Group) */}
+        {statistics.payerOrdersList.length > 0 && (
+          <div className="space-y-2.5 pt-1">
+            <div className="flex items-center justify-between px-1">
+              <div className="flex items-center gap-1.5">
+                <div className="w-5 h-5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+                  <Coins size={12} />
+                </div>
+                <h2 className="text-xs font-bold tracking-tight text-[var(--text)] uppercase">
+                  Orders Paid by Me — Group Collections ({statistics.payerOrdersList.length})
+                </h2>
               </div>
-              <div className="text-[10px] text-[var(--text-muted)] truncate">
-                Across {statistics.totalOrdersCount} orders {statistics.unpaidOrdersCount > 0 && `(${statistics.unpaidOrdersCount} unpaid)`}
-              </div>
+              {statistics.totalReceivablesUSD > 0.009 ? (
+                <Badge variant="warning" className="text-[10px] py-0.2 px-2 font-bold">
+                  ${statistics.totalReceivablesUSD.toFixed(2)} to collect
+                </Badge>
+              ) : (
+                <Badge variant="success" className="text-[10px] py-0.2 px-2 font-bold">
+                  ✓ All Members Settled
+                </Badge>
+              )}
             </div>
-          </Card>
 
-          {/* Paid By Summary Breakdown */}
-          <Card variant="flat" padding="sm" className="sm:col-span-2 space-y-1.5 border border-[var(--border)] flex flex-col justify-between">
+            <div className="space-y-2.5">
+              {statistics.payerOrdersList.map((pOrd) => (
+                <Card key={pOrd.order_id} variant="default" padding="sm" className="space-y-2.5 border border-[var(--border)]">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] pb-2">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-[var(--text)]">
+                          {format(new Date(pOrd.order_date + "T00:00:00"), "EEEE, MMM d, yyyy")}
+                        </span>
+                        {pOrd.chat_title && (
+                          <Badge variant="member" className="text-[9px] py-0 px-1.5">
+                            {pOrd.chat_title}
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-[var(--text-muted)] mt-0.5">
+                        Restaurant Total: <strong className="text-[var(--text)] font-mono">${pOrd.total.toFixed(2)}</strong> · Group Share: <strong className="text-[var(--text)] font-mono">${pOrd.totalToCollect.toFixed(2)}</strong>
+                      </p>
+                    </div>
+
+                    <div className="text-right">
+                      {pOrd.uncollectedUSD > 0.009 ? (
+                        <div>
+                          <span className="text-xs font-bold text-rose-600 dark:text-rose-400 block font-mono">
+                            ${pOrd.uncollectedUSD.toFixed(2)} Unpaid
+                          </span>
+                          <span className="text-[10px] text-[var(--text-muted)] block font-mono">
+                            ≈ {formatKhr(pOrd.uncollectedKHR)}
+                          </span>
+                        </div>
+                      ) : (
+                        <Badge variant="success" className="text-[10px] py-0.5 px-2 font-bold">
+                          ✓ Fully Collected
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Progress Bar */}
+                  <div>
+                    <div className="flex justify-between text-[10px] text-[var(--text-muted)] mb-1 font-medium">
+                      <span>Collection Progress</span>
+                      <span className="text-[var(--text)] font-mono">
+                        ${pOrd.collectedUSD.toFixed(2)} of ${pOrd.totalToCollect.toFixed(2)} ({pOrd.progressPct}%)
+                      </span>
+                    </div>
+                    <div className="w-full h-1.5 bg-[var(--surface-2)] rounded-full overflow-hidden border border-[var(--border)]">
+                      <div 
+                        className={`h-full transition-all duration-300 ${
+                          pOrd.progressPct === 100 ? "bg-emerald-500" : "bg-amber-500"
+                        }`} 
+                        style={{ width: `${pOrd.progressPct}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Unpaid Members List (Remaining not paid yet) */}
+                  <div className="rounded-[var(--radius-sm)] border border-[var(--border)] divide-y divide-[var(--border)] overflow-hidden bg-[var(--surface-2)]/30">
+                    {pOrd.unpaidMembers.length > 0 ? (
+                      pOrd.unpaidMembers.map((m, idx) => (
+                        <div key={idx} className="p-2 flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
+                            <span className="font-bold text-[var(--text)] truncate">{m.user_name}</span>
+                            {m.items?.length > 0 && (
+                              <span className="text-[10px] text-[var(--text-muted)] truncate hidden sm:inline">
+                                ({m.items.map((it: InvoiceDetailItem) => `${it.qty}x ${it.item_name}`).join(", ")})
+                              </span>
+                            )}
+                          </div>
+                          <Badge variant="danger" className="text-[10px] font-mono font-bold shrink-0">
+                            ${m.due.toFixed(2)}
+                          </Badge>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="p-2 text-center text-xs text-emerald-600 dark:text-emerald-400 font-semibold">
+                        ✓ All members have paid you for this order!
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex items-center justify-between pt-0.5">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="text-[11px] h-7 gap-1"
+                      onClick={() => setViewInvoiceId(pOrd.order_id)}
+                    >
+                      <Receipt size={12} /> View Full Invoice
+                    </Button>
+
+                    {pOrd.unpaidMembers.length > 0 && (
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        className="text-[11px] h-7 gap-1 bg-amber-600 hover:bg-amber-700 font-bold"
+                        onClick={() => handleCopyReminder(pOrd)}
+                      >
+                        <Share2 size={12} /> Copy Reminder for Telegram
+                      </Button>
+                    )}
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 4. Payers Breakdown Summary (Who I Owe / Have Paid) */}
+        {statistics.paidByList.length > 0 && (
+          <Card variant="flat" padding="sm" className="space-y-1.5 border border-[var(--border)]">
             <div className="flex items-center justify-between border-b border-[var(--border)] pb-1">
               <div className="flex items-center gap-1.5">
                 <CreditCard size={13} className="text-[var(--color-primary)]" />
                 <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
-                  Paid By Summary
+                  Payers I Have Ordered From
                 </span>
               </div>
               <span className="text-[10px] text-[var(--text-muted)]">
-                {statistics.paidByList.length} payers
+                {statistics.paidByList.length} payer(s)
               </span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-              {statistics.paidByList.length > 0 ? (
-                statistics.paidByList.map(({ payerName, amountUSD, amountKHR, orderCount, unpaidCount }) => (
-                  <div 
-                    key={payerName}
-                    className="flex items-center justify-between px-2 py-1 rounded-[var(--radius-sm)] bg-[var(--surface-2)] text-xs"
-                  >
-                    <span className="truncate font-medium text-[var(--text)] text-[11px]">{payerName}</span>
-                    <div className="text-right ml-1.5 whitespace-nowrap">
-                      <span className="font-bold text-[11px] text-[var(--color-primary)]">
-                        ${amountUSD.toFixed(2)}
-                      </span>
-                      <span className="text-[9px] text-[var(--text-muted)] block leading-tight">
-                        {formatKhr(amountKHR)} · {orderCount}x {unpaidCount > 0 && <span className="text-rose-500 font-semibold">({unpaidCount} unpaid)</span>}
-                      </span>
-                    </div>
+              {statistics.paidByList.map(({ payerName, amountUSD, amountKHR, orderCount, unpaidUSD, unpaidCount }) => (
+                <div 
+                  key={payerName}
+                  className="flex items-center justify-between px-2.5 py-1.5 rounded-[var(--radius-sm)] bg-[var(--surface-2)] text-xs"
+                >
+                  <span className="truncate font-semibold text-[var(--text)] text-[11px]">{payerName}</span>
+                  <div className="text-right ml-1.5 whitespace-nowrap font-mono">
+                    <span className="font-bold text-[11px] text-[var(--text)]">
+                      ${amountUSD.toFixed(2)}
+                    </span>
+                    <span className="text-[9px] text-[var(--text-muted)] block leading-tight">
+                      {orderCount} order(s) {unpaidCount > 0 ? (
+                        <span className="text-rose-500 font-bold">· Owes ${unpaidUSD.toFixed(2)}</span>
+                      ) : (
+                        <span className="text-emerald-600 dark:text-emerald-400 font-medium">· Settled</span>
+                      )}
+                    </span>
                   </div>
-                ))
-              ) : (
-                <p className="text-[11px] text-[var(--text-muted)] italic py-0.5">No payer records found</p>
-              )}
+                </div>
+              ))}
             </div>
           </Card>
-        </div>
+        )}
 
-        {/* 4. Detailed UI List of My Orders */}
+        {/* 5. Detailed UI List of My Orders */}
         <div className="space-y-2.5 pt-1">
           <div className="flex items-center justify-between px-1">
             <h2 className="text-xs font-bold tracking-tight text-[var(--text-muted)] uppercase">
@@ -669,6 +880,7 @@ export default function MyOrdersPage() {
             <>
               {shownOrders.map((ord) => {
                 const inv = invoiceMapByOrderId.get(ord.order_id);
+                const isMeThePayer = isMyIdentity(ord.paid_by?.user_id, ord.paid_by?.username) || Boolean(inv?.is_payer);
                 const payer = inv?.payer_name || ord.paid_by?.username || "Not assigned";
                 const cachedInv = getInvoiceFromCache(ord.order_id) || (inv?.invoice_id ? getInvoiceFromCache(inv.invoice_id) : undefined);
 
@@ -682,7 +894,7 @@ export default function MyOrdersPage() {
                   myOrderSubtotal = inv.my_items.reduce((sum, item) => sum + (item.cost || (item.price * (item.qty || 1))), 0);
                 }
 
-                const isPaid = Boolean(myDetail?.paid || inv?.my_paid);
+                const isPaid = isMeThePayer || Boolean(myDetail?.paid || inv?.my_paid);
                 const orderRate = inv?.usd_khr_rate && inv.usd_khr_rate > 0 ? inv.usd_khr_rate : (rateInfo?.usd_khr || 4047);
                 const myOrderSubtotalKHR = (inv?.my_amount_khr && inv.my_amount_khr > 0)
                   ? inv.my_amount_khr
@@ -714,23 +926,31 @@ export default function MyOrdersPage() {
                       </div>
 
                       <div className="flex items-center gap-1.5">
-                        <Badge variant="admin" className="text-[10px] font-semibold px-1.5 py-0.2">
-                          Payer: {payer}
-                        </Badge>
-                        {ord.has_invoice ? (
-                          isPaid ? (
-                            <Badge variant="success" className="text-[9px] py-0 px-1.5 font-bold">
-                              ✓ Paid
-                            </Badge>
-                          ) : (
-                            <Badge variant="danger" className="text-[9px] py-0 px-1.5 font-bold">
-                              Unpaid
-                            </Badge>
-                          )
-                        ) : (
-                          <Badge variant="default" className="text-[9px] py-0 px-1.5">
-                            Pending Invoice
+                        {isMeThePayer ? (
+                          <Badge variant="success" className="text-[10px] font-bold px-1.5 py-0.2">
+                            ✓ Paid (You are Payer)
                           </Badge>
+                        ) : (
+                          <>
+                            <Badge variant="admin" className="text-[10px] font-semibold px-1.5 py-0.2">
+                              Payer: {payer}
+                            </Badge>
+                            {ord.has_invoice ? (
+                              isPaid ? (
+                                <Badge variant="success" className="text-[9px] py-0 px-1.5 font-bold">
+                                  ✓ Paid
+                                </Badge>
+                              ) : (
+                                <Badge variant="danger" className="text-[9px] py-0 px-1.5 font-bold">
+                                  Owes {payer}
+                                </Badge>
+                              )
+                            ) : (
+                              <Badge variant="default" className="text-[9px] py-0 px-1.5">
+                                Pending Invoice
+                              </Badge>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>
@@ -738,7 +958,7 @@ export default function MyOrdersPage() {
                     {/* Items List (MY ITEMS ONLY) */}
                     <div className="space-y-1">
                       <div className="grid grid-cols-1 gap-1">
-                        {ord.myItems.map((it, idx) => {
+                        {(ord.myItems || []).map((it, idx) => {
                           const dishName = it.item_name || it.name || "Dish";
                           const qty = Number(it.qty) || 1;
                           const cleanName = cleanDishName(dishName);
@@ -770,81 +990,72 @@ export default function MyOrdersPage() {
                                 <span className="font-medium text-[var(--text)] truncate text-[11px]">
                                   {dishName}
                                 </span>
-                                <span className="text-[9px] font-bold px-1 py-0.2 rounded bg-[var(--surface)] text-[var(--text-2)]">
-                                  ×{qty}
-                                </span>
                               </div>
-
-                              {itemPrice !== null ? (
-                                <div className="text-right whitespace-nowrap ml-2">
-                                  <span className="font-bold text-[11px] text-[var(--text)]">
-                                    ${itemPrice.toFixed(2)}
-                                  </span>
-                                  {itemPriceKHR !== null && (
-                                    <span className="text-[9px] text-[var(--text-muted)] block leading-none">
-                                      ≈ {formatKhr(itemPriceKHR)}
+                              <div className="flex items-center gap-2 flex-shrink-0 font-mono">
+                                <span className="text-[10px] text-[var(--text-muted)]">x{qty}</span>
+                                {itemPrice !== null ? (
+                                  <div className="text-right">
+                                    <span className="font-bold text-[11px] text-[var(--text)]">
+                                      ${itemPrice.toFixed(2)}
                                     </span>
-                                  )}
-                                </div>
-                              ) : myOrderSubtotal > 0 ? (
-                                <span className="text-[10px] text-[var(--text-muted)] italic">
-                                  In subtotal
-                                </span>
-                              ) : (
-                                <span className="text-[10px] text-[var(--text-muted)] italic">
-                                  Pending
-                                </span>
-                              )}
+                                    {itemPriceKHR !== null && (
+                                      <span className="text-[9px] text-[var(--text-muted)] block leading-tight">
+                                        {formatKhr(itemPriceKHR)}
+                                      </span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-[10px] text-[var(--text-muted)] italic">—</span>
+                                )}
+                              </div>
                             </div>
                           );
                         })}
                       </div>
-                    </div>
 
-                    {/* Order Footer Subtotal */}
-                    {myOrderSubtotal > 0 && (
-                      <div className="flex items-center justify-between pt-1 text-xs border-t border-dashed border-[var(--border)]">
-                        <span className="text-[10px] text-[var(--text-muted)]">
-                          Rate: {orderRate.toLocaleString()} ៛/$
+                      {/* Subtotal Footer */}
+                      <div className="flex items-center justify-between pt-1 text-xs border-t border-[var(--border)] mt-1.5">
+                        <span className="text-[10px] text-[var(--text-muted)] font-medium">
+                          Order Share:
                         </span>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] text-[var(--text-muted)] font-medium">My Total:</span>
-                          <span className="font-extrabold text-xs text-[var(--color-primary)]">
+                        <div className="text-right font-mono">
+                          <span className="text-xs font-bold text-[var(--color-primary)]">
                             ${myOrderSubtotal.toFixed(2)}
                           </span>
-                          <span className="text-[11px] font-bold text-[var(--color-accent)]">
+                          <span className="text-[10px] text-[var(--text-muted)] ml-1.5">
                             ({formatKhr(myOrderSubtotalKHR)})
                           </span>
                         </div>
                       </div>
-                    )}
+                    </div>
                   </Card>
                 );
               })}
 
-              {myFilteredOrders.length > visibleCount && (
-                <div ref={observerTarget} className="pt-1">
-                  <button
-                    onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
-                    className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-semibold rounded-[var(--radius-md)] border cursor-pointer hover:bg-[var(--surface-2)] transition-colors"
-                    style={{ background: "var(--surface)", color: "var(--text-2)", borderColor: "var(--border)" }}
+              {/* Load More Button / Infinite Scroll Anchor */}
+              <div ref={observerTarget} className="py-2 text-center">
+                {visibleCount < myFilteredOrders.length && (
+                  <Button 
+                    variant="secondary" 
+                    size="sm" 
+                    onClick={() => setVisibleCount((prev) => prev + PAGE_SIZE)}
+                    className="gap-1 text-xs"
                   >
-                    <ChevronDown size={13} className="animate-bounce" />
-                    Load more ({myFilteredOrders.length - visibleCount} remaining)
-                  </button>
-                </div>
-              )}
+                    <ChevronDown size={13} /> Load More ({myFilteredOrders.length - visibleCount} remaining)
+                  </Button>
+                )}
+              </div>
             </>
           )}
         </div>
       </div>
 
+      {/* Invoice Breakdown Modal */}
       <InvoiceViewModal
         invoiceId={viewInvoiceId}
-        open={!!viewInvoiceId}
+        open={Boolean(viewInvoiceId)}
         onClose={() => setViewInvoiceId(null)}
-        isAdmin={isAdmin}
-        onResent={loadData}
+        isAdmin={false}
       />
     </div>
   );

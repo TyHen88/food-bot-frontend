@@ -76,6 +76,8 @@ interface InvoiceRow {
   order_date: string;
   total: number;
   payer_name: string;
+  payer_user_id?: string;
+  is_payer?: boolean;
   my_amount?: number;
   my_paid?: boolean;
   my_amount_khr?: number | null;
@@ -356,26 +358,29 @@ export function MemberSpendModal({
 
     memberFilteredOrders.forEach((ord) => {
       const inv = invoiceMapByOrderId.get(ord.order_id);
-      const payerName = inv?.payer_name || ord.paid_by?.username || "Unknown Payer";
+      const isPayerSelf = isMemberIdentity(ord.paid_by?.user_id, ord.paid_by?.username) || 
+                          isMemberIdentity(inv?.payer_user_id, inv?.payer_name) ||
+                          Boolean(inv?.is_payer);
+      const payerName = isPayerSelf ? "Self (Payer)" : (inv?.payer_name || ord.paid_by?.username || "Unknown Payer");
 
       const orderRate = inv?.usd_khr_rate && inv.usd_khr_rate > 0 ? inv.usd_khr_rate : activeRate;
 
       const cachedInv = getInvoiceFromCache(ord.order_id) || (inv?.invoice_id ? getInvoiceFromCache(inv.invoice_id) : undefined);
       let orderMemberAmountUSD = 0;
-      let orderIsPaid = false;
+      let orderIsPaid = isPayerSelf;
 
       if (inv?.my_amount !== undefined && inv.my_amount > 0) {
         orderMemberAmountUSD = inv.my_amount;
-        orderIsPaid = Boolean(inv.my_paid);
+        if (!isPayerSelf) orderIsPaid = Boolean(inv.my_paid);
       } else if (cachedInv?.details) {
         const mDetail = cachedInv.details.find((d) => isMemberIdentity(d.user_id, d.user_name));
         if (mDetail) {
           orderMemberAmountUSD = mDetail.subtotal;
-          orderIsPaid = Boolean(mDetail.paid);
+          if (!isPayerSelf) orderIsPaid = Boolean(mDetail.paid);
         }
       } else if (inv?.my_items?.length) {
         orderMemberAmountUSD = inv.my_items.reduce((sum, item) => sum + (item.cost || (item.price * (item.qty || 1))), 0);
-        orderIsPaid = Boolean(inv.my_paid);
+        if (!isPayerSelf) orderIsPaid = Boolean(inv.my_paid);
       }
 
       const orderMemberAmountKHR = (inv?.my_amount_khr && inv.my_amount_khr > 0)
@@ -400,7 +405,7 @@ export function MemberSpendModal({
       const orderItemQty = ord.memberItems.reduce((acc, it) => acc + (Number(it.qty) || 1), 0);
       totalItemsCount += orderItemQty;
 
-      // Group amount spent to each payer
+      // Group amount spent to each payer (exclude self orders from unpaid debt)
       const current = paidToMap.get(payerName) || { 
         totalUSD: 0, 
         totalKHR: 0, 
@@ -478,6 +483,10 @@ export function MemberSpendModal({
     memberFilteredOrders.forEach((ord) => {
       if (!ord.has_invoice) return;
       const inv = invoiceMapByOrderId.get(ord.order_id);
+      const isPayerSelf = isMemberIdentity(ord.paid_by?.user_id, ord.paid_by?.username) || 
+                          isMemberIdentity(inv?.payer_user_id, inv?.payer_name) ||
+                          Boolean(inv?.is_payer);
+      if (isPayerSelf) return;
       unpaidInvoiceIds.push(inv?.invoice_id || ord.order_id);
     });
 
@@ -845,23 +854,26 @@ export function MemberSpendModal({
             <div className="space-y-2.5">
               {shownOrders.map((ord) => {
                 const inv = invoiceMapByOrderId.get(ord.order_id);
+                const isPayerSelf = isMemberIdentity(ord.paid_by?.user_id, ord.paid_by?.username) || 
+                                    isMemberIdentity(inv?.payer_user_id, inv?.payer_name) ||
+                                    Boolean(inv?.is_payer);
                 const payer = inv?.payer_name || ord.paid_by?.username || "Payer";
                 const cachedInv = getInvoiceFromCache(ord.order_id) || (inv?.invoice_id ? getInvoiceFromCache(inv.invoice_id) : undefined);
 
                 let orderSubtotal = 0;
-                let isPaid = false;
+                let isPaid = isPayerSelf;
                 if (inv?.my_amount !== undefined && inv.my_amount > 0) {
                   orderSubtotal = inv.my_amount;
-                  isPaid = Boolean(inv.my_paid);
+                  if (!isPayerSelf) isPaid = Boolean(inv.my_paid);
                 } else if (cachedInv?.details) {
                   const mDetail = cachedInv.details.find((d) => isMemberIdentity(d.user_id, d.user_name));
                   if (mDetail) {
                     orderSubtotal = mDetail.subtotal;
-                    isPaid = Boolean(mDetail.paid);
+                    if (!isPayerSelf) isPaid = Boolean(mDetail.paid);
                   }
                 } else if (inv?.my_items?.length) {
                   orderSubtotal = inv.my_items.reduce((sum, item) => sum + (item.cost || (item.price * (item.qty || 1))), 0);
-                  isPaid = Boolean(inv.my_paid);
+                  if (!isPayerSelf) isPaid = Boolean(inv.my_paid);
                 }
 
                 const orderRate = inv?.usd_khr_rate && inv.usd_khr_rate > 0 ? inv.usd_khr_rate : (rateInfo?.usd_khr || 4047);
@@ -884,11 +896,15 @@ export function MemberSpendModal({
                       </div>
                       <div className="flex items-center gap-1">
                         <Badge variant="admin" className="text-[9px] py-0 px-1.5">
-                          Payer: {payer}
+                          {isPayerSelf ? "Payer (Self)" : `Payer: ${payer}`}
                         </Badge>
                         {ord.has_invoice ? (
                           <>
-                            {isPaid ? (
+                            {isPayerSelf ? (
+                              <Badge variant="success" className="text-[9px] py-0 px-1.5 font-bold">
+                                ✓ Paid (Payer)
+                              </Badge>
+                            ) : isPaid ? (
                               <Badge variant="success" className="text-[9px] py-0 px-1.5 font-bold">
                                 ✓ Paid
                               </Badge>
@@ -897,7 +913,7 @@ export function MemberSpendModal({
                                 Unpaid
                               </Badge>
                             )}
-                            {isAdmin && (
+                            {isAdmin && !isPayerSelf && (
                               <button
                                 type="button"
                                 disabled={updatingPaidOrderId === ord.order_id}

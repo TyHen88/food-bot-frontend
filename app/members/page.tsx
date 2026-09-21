@@ -15,7 +15,8 @@ import {
   Check,
   Zap,
   Loader2,
-  ChevronDown
+  ChevronDown,
+  CreditCard,
 } from "lucide-react";
 import { formatDistanceToNow, parseISO } from "date-fns";
 import { api } from "@/lib/api";
@@ -44,6 +45,21 @@ interface Member {
   total_spend?: number;
   paid_spend?: number;
   unpaid_invoices_count?: number;
+  payer_receivables?: number;
+  owed_to_payers?: Array<{
+    payer_name: string;
+    payer_user_id?: string;
+    amount: number;
+    order_date?: string;
+    invoice_id?: string;
+  }>;
+  pending_debtors?: Array<{
+    user_name: string;
+    user_id?: string;
+    amount: number;
+    order_date?: string;
+    invoice_id?: string;
+  }>;
 }
 
 const AVATAR_COLORS = [
@@ -80,10 +96,14 @@ interface PaginatedMembersResponse {
     admins: number;
     active: number;
     total_debt: number;
+    total_receivables?: number;
+    total_payers_waiting?: number;
   };
 }
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 50;
+
+type FilterTab = "all" | "debtors" | "payers" | "settled";
 
 export default function MembersPage() {
   const { loading: authLoading, isAdmin } = useAuth();
@@ -94,10 +114,18 @@ export default function MembersPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
-  const [stats, setStats] = useState({ total: 0, admins: 0, active: 0, totalDebt: 0 });
+  const [stats, setStats] = useState({
+    total: 0,
+    admins: 0,
+    active: 0,
+    totalDebt: 0,
+    totalReceivables: 0,
+    totalPayersWaiting: 0,
+  });
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
+  const [filterTab, setFilterTab] = useState<FilterTab>("all");
 
   const observerTarget = useRef<HTMLDivElement | null>(null);
 
@@ -135,6 +163,8 @@ export default function MembersPage() {
             admins: res.stats.admins ?? 0,
             active: res.stats.active ?? 0,
             totalDebt: res.stats.total_debt ?? 0,
+            totalReceivables: res.stats.total_receivables ?? 0,
+            totalPayersWaiting: res.stats.total_payers_waiting ?? 0,
           });
         }
       } else if (Array.isArray(res)) {
@@ -246,6 +276,19 @@ export default function MembersPage() {
     );
   };
 
+  const debtorCount = useMemo(() => members.filter(m => (m.unpaid_debt ?? 0) > 0.009).length, [members]);
+  const payerCount = useMemo(() => members.filter(m => (m.payer_receivables ?? 0) > 0.009).length, [members]);
+  const settledCount = useMemo(() => members.filter(m => (m.unpaid_debt ?? 0) <= 0.009 && (m.total_spend ?? 0) > 0).length, [members]);
+
+  const displayedMembers = useMemo(() => {
+    return members.filter(m => {
+      if (filterTab === "debtors") return (m.unpaid_debt ?? 0) > 0.009;
+      if (filterTab === "payers") return (m.payer_receivables ?? 0) > 0.009;
+      if (filterTab === "settled") return (m.unpaid_debt ?? 0) <= 0.009;
+      return true;
+    });
+  }, [members, filterTab]);
+
   return (
     <>
       {/* Mobile Top Bar */}
@@ -313,17 +356,9 @@ export default function MembersPage() {
             </div>
             <div className="min-w-0">
               <div className="text-lg font-bold text-[var(--text)] leading-tight">{stats.total}</div>
-              <div className="text-[10px] font-semibold text-[var(--text-muted)] truncate">Total Members</div>
-            </div>
-          </Card>
-
-          <Card variant="default" padding="sm" className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full flex items-center justify-center bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 shrink-0">
-              <Shield size={16} />
-            </div>
-            <div className="min-w-0">
-              <div className="text-lg font-bold text-[var(--text)] leading-tight">{stats.admins}</div>
-              <div className="text-[10px] font-semibold text-[var(--text-muted)] truncate">Admins</div>
+              <div className="text-[10px] font-semibold text-[var(--text-muted)] truncate">
+                Total ({stats.admins} Admins)
+              </div>
             </div>
           </Card>
 
@@ -333,7 +368,7 @@ export default function MembersPage() {
             </div>
             <div className="min-w-0">
               <div className="text-lg font-bold text-[var(--text)] leading-tight">{stats.active}</div>
-              <div className="text-[10px] font-semibold text-[var(--text-muted)] truncate">Active Users</div>
+              <div className="text-[10px] font-semibold text-[var(--text-muted)] truncate">Active Members</div>
             </div>
           </Card>
 
@@ -346,31 +381,106 @@ export default function MembersPage() {
               <Wallet size={16} />
             </div>
             <div className="min-w-0">
-              <div className="text-lg font-bold text-[var(--text)] leading-tight">
+              <div className={`text-lg font-bold leading-tight ${stats.totalDebt > 0.009 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
                 ${stats.totalDebt.toFixed(2)}
               </div>
               <div className="text-[10px] font-semibold text-[var(--text-muted)] truncate">
-                {stats.totalDebt > 0.009 ? "Group Debt" : "All Settled"}
+                {stats.totalDebt > 0.009 ? "Group Debt (Unpaid)" : "All Settled"}
+              </div>
+            </div>
+          </Card>
+
+          <Card variant="default" padding="sm" className="flex items-center gap-3">
+            <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${
+              stats.totalReceivables > 0.009
+                ? "bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300"
+                : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400"
+            }`}>
+              <CreditCard size={16} />
+            </div>
+            <div className="min-w-0">
+              <div className={`text-lg font-bold leading-tight ${stats.totalReceivables > 0.009 ? "text-amber-600 dark:text-amber-400" : "text-[var(--text)]"}`}>
+                ${stats.totalReceivables.toFixed(2)}
+              </div>
+              <div className="text-[10px] font-semibold text-[var(--text-muted)] truncate">
+                {stats.totalPayersWaiting > 0 ? `Payers Waiting (${stats.totalPayersWaiting})` : "No Payers Waiting"}
               </div>
             </div>
           </Card>
         </div>
 
-        {/* 2. Search & Filter Bar */}
-        <div className="flex items-center gap-3">
-          <div className="relative flex-1">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
-            <input 
-              type="text"
-              placeholder="Search by name, username, or ID..."
-              className="w-full pl-9 pr-4 py-2 text-xs rounded-[var(--radius-md)] border focus:outline-none focus:ring-1 bg-[var(--surface)] text-[var(--text)] border-[var(--border)]"
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-            />
+        {/* 2. Filter Tabs & Search Bar */}
+        <div className="space-y-2.5">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+            <button
+              onClick={() => setFilterTab("all")}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-full whitespace-nowrap transition-all border cursor-pointer ${
+                filterTab === "all"
+                  ? "bg-[var(--color-primary)] text-white border-[var(--color-primary)] shadow-xs"
+                  : "bg-[var(--surface-2)] text-[var(--text-muted)] border-transparent hover:text-[var(--text)]"
+              }`}
+            >
+              All ({members.length})
+            </button>
+            <button
+              onClick={() => setFilterTab("debtors")}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-full whitespace-nowrap transition-all border cursor-pointer flex items-center gap-1 ${
+                filterTab === "debtors"
+                  ? "bg-rose-600 text-white border-rose-600 shadow-xs"
+                  : "bg-[var(--surface-2)] text-rose-600 dark:text-rose-400 border-transparent hover:bg-rose-50 dark:hover:bg-rose-950/30"
+              }`}
+            >
+              <span>Owes Money</span>
+              <span className={`px-1.5 py-0.2 text-[10px] rounded-full font-bold ${
+                filterTab === "debtors" ? "bg-white/20 text-white" : "bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300"
+              }`}>
+                {debtorCount}
+              </span>
+            </button>
+            <button
+              onClick={() => setFilterTab("payers")}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-full whitespace-nowrap transition-all border cursor-pointer flex items-center gap-1 ${
+                filterTab === "payers"
+                  ? "bg-amber-600 text-white border-amber-600 shadow-xs"
+                  : "bg-[var(--surface-2)] text-amber-600 dark:text-amber-400 border-transparent hover:bg-amber-50 dark:hover:bg-amber-950/30"
+              }`}
+            >
+              <span>Payers Waiting</span>
+              <span className={`px-1.5 py-0.2 text-[10px] rounded-full font-bold ${
+                filterTab === "payers" ? "bg-white/20 text-white" : "bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300"
+              }`}>
+                {payerCount}
+              </span>
+            </button>
+            <button
+              onClick={() => setFilterTab("settled")}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-full whitespace-nowrap transition-all border cursor-pointer flex items-center gap-1 ${
+                filterTab === "settled"
+                  ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                  : "bg-[var(--surface-2)] text-emerald-600 dark:text-emerald-400 border-transparent hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+              }`}
+            >
+              <span>Settled</span>
+              <span className={`px-1.5 py-0.2 text-[10px] rounded-full font-bold ${
+                filterTab === "settled" ? "bg-white/20 text-white" : "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300"
+              }`}>
+                {settledCount}
+              </span>
+            </button>
           </div>
-          <button className="w-8 h-8 flex items-center justify-center rounded-[var(--radius-md)] border hover:bg-[var(--surface-2)] text-[var(--text-muted)] cursor-pointer bg-[var(--surface)] border-[var(--border)]">
-            <SlidersHorizontal size={14} />
-          </button>
+
+          <div className="flex items-center gap-3">
+            <div className="relative flex-1">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+              <input 
+                type="text"
+                placeholder="Search by name, username, or ID..."
+                className="w-full pl-9 pr-4 py-2 text-xs rounded-[var(--radius-md)] border focus:outline-none focus:ring-1 bg-[var(--surface)] text-[var(--text)] border-[var(--border)]"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+              />
+            </div>
+          </div>
         </div>
 
         {/* 3. Members List Container */}
@@ -378,17 +488,17 @@ export default function MembersPage() {
           <div className="space-y-3">
             {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-16 rounded-[var(--radius-lg)]" />)}
           </div>
-        ) : members.length === 0 ? (
+        ) : displayedMembers.length === 0 ? (
           <EmptyState 
             icon={<Users size={32} />} 
-            title={searchQuery ? "No members found" : "No registered members"}
+            title={searchQuery ? "No members found" : filterTab !== "all" ? `No members in '${filterTab}' category` : "No registered members"}
             description={searchQuery ? "Try refining your search filter." : "Members will appear here once they register or participate in polls."} 
           />
         ) : (
           <div className="space-y-3">
             <Card variant="default" padding="none" className="overflow-hidden border border-[var(--border)] rounded-[var(--radius-lg)] shadow-sm animate-fade-in bg-[var(--surface)]">
               <div className="divide-y divide-[var(--border)]">
-                {members.map(m => {
+                {displayedMembers.map(m => {
                   const displayName = m.name || m.full_name || `User ${m.user_id}`;
                   const isAdm = m.role?.toLowerCase() === "admin";
                   const isActive = m.status?.toLowerCase() === "active";
@@ -398,94 +508,123 @@ export default function MembersPage() {
                   return (
                     <div 
                       key={m.user_id}
-                      className="flex items-center justify-between p-3 sm:p-4 hover:bg-[var(--surface-2)] transition-colors gap-3"
+                      className="p-3 sm:p-4 hover:bg-[var(--surface-2)] transition-colors space-y-2.5"
                     >
-                      {/* Left: Avatar + Info */}
-                      <div className="flex items-center gap-3 min-w-0 flex-1">
-                        {/* Avatar */}
-                        <div className="relative shrink-0">
-                          <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs ${avatarStyle.bg} ${avatarStyle.text}`}>
-                            {initials}
+                      <div className="flex items-center justify-between gap-3">
+                        {/* Left: Avatar + Info */}
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          {/* Avatar */}
+                          <div className="relative shrink-0">
+                            <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs ${avatarStyle.bg} ${avatarStyle.text}`}>
+                              {initials}
+                            </div>
+                            <span 
+                              className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-[var(--surface)] ${
+                                isActive ? "bg-emerald-500" : "bg-neutral-400"
+                              }`}
+                            />
                           </div>
-                          <span 
-                            className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-[var(--surface)] ${
-                              isActive ? "bg-emerald-500" : "bg-neutral-400"
-                            }`}
-                          />
-                        </div>
 
-                        {/* Info */}
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-xs font-bold text-[var(--text)] truncate">{displayName}</span>
-                            <span className={`px-1.5 py-0.5 text-[8px] font-bold rounded-full ${
-                              isAdm 
-                                ? "bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300"
-                                : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400"
-                            }`}>
-                              {isAdm ? "Admin" : "Member"}
-                            </span>
-                          </div>
-                          <p className="text-[10px] text-[var(--text-muted)] mt-0.5 truncate font-medium">
-                            {m.username ? `@${m.username}` : `ID: ${m.user_id}`}
-                            {m.last_active_at && (
-                              <> · Active {formatDistanceToNow(parseISO(m.last_active_at), { addSuffix: true })}</>
-                            )}
-                          </p>
-                          {m.bank_name && (
-                            <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold mt-0.5 truncate">
-                              🏦 ABA: {m.bank_name}
+                          {/* Info */}
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-xs font-bold text-[var(--text)] truncate">{displayName}</span>
+                              <span className={`px-1.5 py-0.5 text-[8px] font-bold rounded-full ${
+                                isAdm 
+                                  ? "bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300"
+                                  : "bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400"
+                              }`}>
+                                {isAdm ? "Admin" : "Member"}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-[var(--text-muted)] mt-0.5 truncate font-medium">
+                              {m.username ? `@${m.username}` : `ID: ${m.user_id}`}
+                              {m.last_active_at && (
+                                <> · Active {formatDistanceToNow(parseISO(m.last_active_at), { addSuffix: true })}</>
+                              )}
                             </p>
-                          )}
+                            {m.bank_name && (
+                              <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold mt-0.5 truncate">
+                                🏦 ABA: {m.bank_name}
+                              </p>
+                            )}
+                          </div>
                         </div>
-                      </div>
 
-                      {/* Actions / Debt Status / Info */}
-                      <div className="flex items-center gap-2 shrink-0">
-                        {(m.unpaid_debt ?? 0) > 0.009 ? (
-                          <Badge variant="danger" className="text-[10px] font-bold whitespace-nowrap">
-                            Debt: ${(m.unpaid_debt ?? 0).toFixed(2)}
-                          </Badge>
-                        ) : (m.total_spend ?? 0) > 0 ? (
-                          <Badge variant="success" className="text-[10px] whitespace-nowrap">
-                            ✓ Settled
-                          </Badge>
-                        ) : null}
+                        {/* Actions / Debt Status / Info */}
+                        <div className="flex items-center gap-2 shrink-0">
+                          {(m.unpaid_debt ?? 0) > 0.009 ? (
+                            <Badge variant="danger" className="text-[10px] font-bold whitespace-nowrap">
+                              Owes: ${(m.unpaid_debt ?? 0).toFixed(2)}
+                            </Badge>
+                          ) : (m.payer_receivables ?? 0) > 0.009 ? (
+                            <Badge variant="warning" className="text-[10px] font-bold whitespace-nowrap bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30">
+                              💳 Collect: ${(m.payer_receivables ?? 0).toFixed(2)}
+                            </Badge>
+                          ) : (m.total_spend ?? 0) > 0 ? (
+                            <Badge variant="success" className="text-[10px] whitespace-nowrap">
+                              ✓ Settled
+                            </Badge>
+                          ) : null}
 
-                        {isAdmin && (m.unpaid_debt ?? 0) > 0.009 && (
+                          {isAdmin && (m.unpaid_debt ?? 0) > 0.009 && (
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              onClick={() => setConfirmMemberForSettle(m)}
+                              disabled={settlingUserId === m.user_id}
+                              className="gap-1 text-[11px] px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 font-bold"
+                              title={`Mark all unpaid orders as paid for ${displayName}`}
+                            >
+                              {settlingUserId === m.user_id ? (
+                                <Loader2 size={11} className="animate-spin" />
+                              ) : (
+                                <Check size={11} />
+                              )}
+                              <span>Mark Paid</span>
+                            </Button>
+                          )}
+
+                          {m.phone && (
+                            <div className="hidden sm:flex items-center gap-1 text-[10px] text-[var(--text-muted)] font-semibold bg-[var(--surface-2)] px-2 py-1 rounded-[var(--radius-sm)]">
+                              <Phone size={10} />
+                              <span>{m.phone}</span>
+                            </div>
+                          )}
                           <Button
                             size="sm"
-                            variant="primary"
-                            onClick={() => setConfirmMemberForSettle(m)}
-                            disabled={settlingUserId === m.user_id}
-                            className="gap-1 text-[11px] px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 font-bold"
-                            title={`Mark all unpaid orders as paid for ${displayName}`}
+                            variant="secondary"
+                            onClick={() => setSelectedMember(m)}
+                            className="gap-1 text-[11px] px-2.5 py-1"
                           >
-                            {settlingUserId === m.user_id ? (
-                              <Loader2 size={11} className="animate-spin" />
-                            ) : (
-                              <Check size={11} />
-                            )}
-                            <span>Mark Paid</span>
+                            <Wallet size={12} className="text-[var(--color-primary)]" />
+                            <span>View</span>
                           </Button>
-                        )}
-
-                        {m.phone && (
-                          <div className="hidden sm:flex items-center gap-1 text-[10px] text-[var(--text-muted)] font-semibold bg-[var(--surface-2)] px-2 py-1 rounded-[var(--radius-sm)]">
-                            <Phone size={10} />
-                            <span>{m.phone}</span>
-                          </div>
-                        )}
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => setSelectedMember(m)}
-                          className="gap-1 text-[11px] px-2.5 py-1"
-                        >
-                          <Wallet size={12} className="text-[var(--color-primary)]" />
-                          <span>View</span>
-                        </Button>
+                        </div>
                       </div>
+
+                      {/* Itemized Debt or Receivables Breakdown (if any) */}
+                      {((m.unpaid_debt ?? 0) > 0.009 && m.owed_to_payers && m.owed_to_payers.length > 0) && (
+                        <div className="ml-12 pl-2 border-l-2 border-rose-300 dark:border-rose-900/50 py-0.5 text-[11px] text-[var(--text-muted)] flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span className="font-semibold text-rose-600 dark:text-rose-400">Owes:</span>
+                          {m.owed_to_payers.map((ot, idx) => (
+                            <span key={idx} className="bg-rose-500/10 text-rose-700 dark:text-rose-300 px-1.5 py-0.5 rounded text-[10px] font-medium">
+                              ${ot.amount.toFixed(2)} to {ot.payer_name || "Payer"}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {((m.payer_receivables ?? 0) > 0.009 && m.pending_debtors && m.pending_debtors.length > 0) && (
+                        <div className="ml-12 pl-2 border-l-2 border-amber-300 dark:border-amber-900/50 py-0.5 text-[11px] text-[var(--text-muted)] flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span className="font-semibold text-amber-600 dark:text-amber-400">Waiting on:</span>
+                          {m.pending_debtors.map((pd, idx) => (
+                            <span key={idx} className="bg-amber-500/10 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded text-[10px] font-medium">
+                              {pd.user_name} (${pd.amount.toFixed(2)})
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

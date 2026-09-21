@@ -26,6 +26,7 @@ export interface Invoice {
   details: InvoiceDetailEntry[];
   total: number;
   payer_name: string;
+  payer_user_id?: string;
   sent_count: number;
   last_sent_at: string;
   payer_qr_image?: string;
