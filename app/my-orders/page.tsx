@@ -30,11 +30,7 @@ import { SkeletonRow } from "@/components/ui/Skeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useAuth } from "@/contexts/AuthContext";
 import { TopBar } from "@/components/layout/TopBar";
-import { 
-  getInvoiceFromCache, 
-  type Invoice, 
-  type InvoiceDetailEntry 
-} from "@/lib/invoiceCache";
+import { invalidateInvoiceCache } from "@/lib/invoiceCache";
 import { InvoiceViewModal } from "@/components/orders/InvoiceViewModal";
 import type { Order, OrderItem } from "@/components/orders/OrderItemsEditor";
 
@@ -56,7 +52,10 @@ interface InvoiceRow {
   payer_user_id?: string;
   my_amount?: number;
   my_paid?: boolean;
+  /** What the caller still owes on this invoice after partial payments. */
+  my_due?: number;
   my_amount_khr?: number | null;
+  my_due_khr?: number | null;
   usd_khr_rate?: number;
   my_items?: InvoiceDetailItem[];
   is_payer?: boolean;
@@ -116,6 +115,11 @@ function toKhr(usd: number, rate = 4047, rounding = 100): number {
   return Math.round(exact);
 }
 
+/** Local-midnight Date for a "YYYY-MM-DD" order date (ignores any time suffix) */
+function parseDay(day: string): Date {
+  return new Date(`${(day || "").slice(0, 10)}T00:00:00`);
+}
+
 /** Format KHR with thousands separator and riel symbol */
 function formatKhr(amount: number): string {
   if (isNaN(amount) || amount === null || amount === undefined) return "0៛";
@@ -153,7 +157,6 @@ export default function MyOrdersPage() {
     if (profile?.full_name) set.add(normName(profile.full_name));
     if (user?.username) set.add(normName(user.username));
     if (user?.first_name) set.add(normName(user.first_name));
-    if (user?.last_name) set.add(normName(user.last_name));
     const combined = [user?.first_name, user?.last_name].filter(Boolean).join(" ");
     if (combined) set.add(normName(combined));
     return set;
@@ -173,9 +176,14 @@ export default function MyOrdersPage() {
     return isMyIdentity(it.user_id, it.name);
   }, [isMyIdentity]);
 
-  // Load orders, invoices, and official NBC exchange rate
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  // Load orders, invoices, and official NBC exchange rate. Each call gets a
+  // sequence number so a slow response for a previous filter can't overwrite
+  // the data for the filter now selected. `silent` refreshes in place
+  // without the skeleton.
+  const requestSeq = useRef(0);
+  const loadData = useCallback(async (silent = false) => {
+    const seq = ++requestSeq.current;
+    if (!silent) setLoading(true);
     try {
       const orderParams = new URLSearchParams();
       const invoiceParams = new URLSearchParams();
@@ -194,6 +202,7 @@ export default function MyOrdersPage() {
         api.get<InvoiceRow[] | { items: InvoiceRow[] }>(`/invoices?${invoiceParams.toString()}${chatIdQuery()}`),
         api.get<ExchangeRateData>(`/exchange-rate${chatIdQuery()}`).catch(() => null),
       ]);
+      if (seq !== requestSeq.current) return;
 
       const fetchedOrders = Array.isArray(ordersData)
         ? ordersData
@@ -206,21 +215,36 @@ export default function MyOrdersPage() {
         ? invoicesData.items
         : [];
 
+      // The invoice modal reads a 5-minute cache; drop it so opening an
+      // invoice shows the same paid status as the list just fetched.
+      invalidateInvoiceCache();
       setOrders(fetchedOrders);
       setInvoices(fetchedInvoices);
       if (exchangeRateData) {
         setRateInfo(exchangeRateData);
       }
     } catch (e: unknown) {
-      toast((e as Error).message, "error");
+      if (seq === requestSeq.current) toast((e as Error).message, "error");
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
   }, [fromDate, toDate, toast]);
 
   useEffect(() => {
     if (authLoading) return;
     loadData();
+  }, [loadData, authLoading]);
+
+  // Paying happens outside the Mini App (ABA app, or an admin marking it),
+  // so re-fetch whenever the user comes back to it — otherwise the order
+  // keeps showing "Owes" until they think to press Refresh.
+  useEffect(() => {
+    if (authLoading) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") loadData(true);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
   }, [loadData, authLoading]);
 
   // Quick filter tab handler
@@ -244,28 +268,24 @@ export default function MyOrdersPage() {
     }
   }
 
-  // Filter orders by date, and keep orders containing my dishes OR where I was the payer
+  // Orders in the date range that contain my dishes. Orders I only paid for
+  // (no dishes of mine) are listed under "Orders Paid by Me" instead, so they
+  // don't inflate the order/dish counts here.
   const myFilteredOrders = useMemo(() => {
     return orders
       .filter((ord) => {
-        if (fromDate && ord.order_date < fromDate) return false;
-        if (toDate && ord.order_date > toDate) return false;
+        const day = (ord.order_date || "").slice(0, 10);
+        if (fromDate && day < fromDate) return false;
+        if (toDate && day > toDate) return false;
         return true;
       })
-      .map((ord) => {
-        const myItems = (ord.items || []).filter(isMyItem);
-        return {
-          ...ord,
-          myItems,
-        };
-      })
-      .filter((ord) => ord.myItems.length > 0 || isMyIdentity(ord.paid_by?.user_id, ord.paid_by?.username));
-  }, [orders, fromDate, toDate, isMyItem, isMyIdentity]);
+      .map((ord) => ({ ...ord, myItems: (ord.items || []).filter(isMyItem) }))
+      .filter((ord) => ord.myItems.length > 0);
+  }, [orders, fromDate, toDate, isMyItem]);
 
   // Pagination state & Infinite Scroll
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   useEffect(() => { setVisibleCount(PAGE_SIZE); }, [fromDate, toDate, quickFilter]);
-  const shownOrders = useMemo(() => myFilteredOrders.slice(0, visibleCount), [myFilteredOrders, visibleCount]);
 
   const observerTarget = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -292,18 +312,51 @@ export default function MyOrdersPage() {
     return map;
   }, [invoices]);
 
+  // One record per order with my share of it, so the summary cards, the
+  // unpaid badges and each order card all read the same numbers. Amount and
+  // paid status come from the server's invoice list (my_amount / my_due),
+  // fetched fresh on every load — never from the 5-minute invoice cache,
+  // which is what kept orders showing "Owes" after they were paid.
+  const myOrderRows = useMemo(() => {
+    const fallbackRate = rateInfo?.usd_khr && rateInfo.usd_khr > 0 ? rateInfo.usd_khr : 4047;
+    const rounding = rateInfo?.khr_rounding || 100;
+    return myFilteredOrders.map((ord) => {
+      const inv = invoiceMapByOrderId.get(ord.order_id);
+      const isMeThePayer = isMyIdentity(ord.paid_by?.user_id, ord.paid_by?.username) || Boolean(inv?.is_payer);
+      const payerName = inv?.payer_name || ord.paid_by?.username || "";
+      const orderRate = inv?.usd_khr_rate && inv.usd_khr_rate > 0 ? inv.usd_khr_rate : fallbackRate;
+      const amountUSD = inv?.my_amount ?? 0;
+      // my_due is what's left after partial payments; a response without it
+      // (backend not yet redeployed) falls back to all-or-nothing on my_paid.
+      const dueUSD = !inv || isMeThePayer ? 0 : (inv.my_due ?? (inv.my_paid ? 0 : amountUSD));
+      const amountKHR = inv?.my_amount_khr && inv.my_amount_khr > 0
+        ? inv.my_amount_khr
+        : toKhr(amountUSD, orderRate, rounding);
+      const dueKHR = inv?.my_due_khr != null ? inv.my_due_khr : toKhr(dueUSD, orderRate, rounding);
+      return {
+        ord,
+        inv,
+        isMeThePayer,
+        payerName,
+        orderRate,
+        amountUSD,
+        amountKHR,
+        dueUSD,
+        dueKHR,
+        owes: dueUSD > 0.009,
+      };
+    });
+  }, [myFilteredOrders, invoiceMapByOrderId, isMyIdentity, rateInfo]);
+
+  const shownOrders = useMemo(() => myOrderRows.slice(0, visibleCount), [myOrderRows, visibleCount]);
+
   // Calculate my spend, my debts to other payers, and what group members owe me (as payer)
   const statistics = useMemo(() => {
     let totalSpendUSD = 0;
-    let totalPaidUSD = 0;
     let totalUnpaidUSD = 0;
-
     let totalSpendKHR = 0;
-    let totalPaidKHR = 0;
     let totalUnpaidKHR = 0;
-
     let totalItemsCount = 0;
-    let paidOrdersCount = 0;
     let unpaidOrdersCount = 0;
 
     let totalReceivablesUSD = 0;
@@ -312,9 +365,9 @@ export default function MyOrdersPage() {
     const activeRate = rateInfo?.usd_khr && rateInfo.usd_khr > 0 ? rateInfo.usd_khr : 4047;
     const rounding = rateInfo?.khr_rounding || 100;
 
-    const paidByMap = new Map<string, { 
-      totalUSD: number; 
-      totalKHR: number; 
+    const paidByMap = new Map<string, {
+      totalUSD: number;
+      totalKHR: number;
       count: number;
       unpaidUSD: number;
       unpaidKHR: number;
@@ -322,75 +375,34 @@ export default function MyOrdersPage() {
     }>();
 
     // 1. Process orders where I ate food
-    myFilteredOrders.forEach((ord) => {
-      const inv = invoiceMapByOrderId.get(ord.order_id);
-      const isMeThePayer = isMyIdentity(ord.paid_by?.user_id, ord.paid_by?.username) || Boolean(inv?.is_payer);
-      const payerName = inv?.payer_name || ord.paid_by?.username || "Unknown Payer";
-
-      const orderRate = inv?.usd_khr_rate && inv.usd_khr_rate > 0 ? inv.usd_khr_rate : activeRate;
-
-      const cachedInv = getInvoiceFromCache(ord.order_id) || (inv?.invoice_id ? getInvoiceFromCache(inv.invoice_id) : undefined);
-      let orderMyAmountUSD = 0;
-      let orderIsPaid = false;
-
-      if (inv?.my_amount !== undefined && inv.my_amount > 0) {
-        orderMyAmountUSD = inv.my_amount;
-        orderIsPaid = isMeThePayer || Boolean(inv.my_paid);
-      } else if (cachedInv?.details) {
-        const myDetail = cachedInv.details.find((d) => isMyIdentity(d.user_id, d.user_name));
-        if (myDetail) {
-          orderMyAmountUSD = myDetail.subtotal;
-          orderIsPaid = isMeThePayer || Boolean(myDetail.paid);
-        }
-      } else if (inv?.my_items?.length) {
-        orderMyAmountUSD = inv.my_items.reduce((sum, item) => sum + (item.cost || (item.price * (item.qty || 1))), 0);
-        orderIsPaid = isMeThePayer || Boolean(inv.my_paid);
+    myOrderRows.forEach((row) => {
+      totalSpendUSD += row.amountUSD;
+      totalSpendKHR += row.amountKHR;
+      if (row.owes) {
+        totalUnpaidUSD += row.dueUSD;
+        totalUnpaidKHR += row.dueKHR;
+        unpaidOrdersCount += 1;
       }
-
-      // If user is the payer, their own food was paid by themselves upfront
-      if (isMeThePayer) {
-        orderIsPaid = true;
-      }
-
-      const orderMyAmountKHR = (inv?.my_amount_khr && inv.my_amount_khr > 0)
-        ? inv.my_amount_khr
-        : toKhr(orderMyAmountUSD, orderRate, rounding);
-
-      totalSpendUSD += orderMyAmountUSD;
-      totalSpendKHR += orderMyAmountKHR;
-
-      if (ord.has_invoice) {
-        if (orderIsPaid) {
-          totalPaidUSD += orderMyAmountUSD;
-          totalPaidKHR += orderMyAmountKHR;
-          paidOrdersCount += 1;
-        } else {
-          totalUnpaidUSD += orderMyAmountUSD;
-          totalUnpaidKHR += orderMyAmountKHR;
-          unpaidOrdersCount += 1;
-        }
-      }
-
-      const orderItemQty = (ord.myItems || []).reduce((acc, it) => acc + (Number(it.qty) || 1), 0);
-      totalItemsCount += orderItemQty;
+      totalItemsCount += row.ord.myItems.reduce((acc, it) => acc + (Number(it.qty) || 1), 0);
 
       // Group by who paid (debt to payers)
-      if (!isMeThePayer && payerName) {
-        const currentPayer = paidByMap.get(payerName) || { 
-          totalUSD: 0, 
-          totalKHR: 0, 
+      if (!row.isMeThePayer) {
+        const payerName = row.payerName || "Unknown Payer";
+        const currentPayer = paidByMap.get(payerName) || {
+          totalUSD: 0,
+          totalKHR: 0,
           count: 0,
           unpaidUSD: 0,
           unpaidKHR: 0,
           unpaidCount: 0
         };
         paidByMap.set(payerName, {
-          totalUSD: currentPayer.totalUSD + orderMyAmountUSD,
-          totalKHR: currentPayer.totalKHR + orderMyAmountKHR,
+          totalUSD: currentPayer.totalUSD + row.amountUSD,
+          totalKHR: currentPayer.totalKHR + row.amountKHR,
           count: currentPayer.count + 1,
-          unpaidUSD: currentPayer.unpaidUSD + (ord.has_invoice && !orderIsPaid ? orderMyAmountUSD : 0),
-          unpaidKHR: currentPayer.unpaidKHR + (ord.has_invoice && !orderIsPaid ? orderMyAmountKHR : 0),
-          unpaidCount: currentPayer.unpaidCount + (ord.has_invoice && !orderIsPaid ? 1 : 0),
+          unpaidUSD: currentPayer.unpaidUSD + (row.owes ? row.dueUSD : 0),
+          unpaidKHR: currentPayer.unpaidKHR + (row.owes ? row.dueKHR : 0),
+          unpaidCount: currentPayer.unpaidCount + (row.owes ? 1 : 0),
         });
       }
     });
@@ -438,15 +450,12 @@ export default function MyOrdersPage() {
 
     return {
       totalSpendUSD,
-      totalPaidUSD,
       totalUnpaidUSD,
       totalSpendKHR,
-      totalPaidKHR,
       totalUnpaidKHR,
       totalReceivablesUSD,
       totalReceivablesKHR,
-      totalOrdersCount: myFilteredOrders.length,
-      paidOrdersCount,
+      totalOrdersCount: myOrderRows.length,
       unpaidOrdersCount,
       totalItemsCount,
       paidByList,
@@ -455,13 +464,13 @@ export default function MyOrdersPage() {
       rateDisplay: rateInfo?.display || `${activeRate.toLocaleString()} KHR / USD`,
       rateDate: rateInfo?.rate_date || rateInfo?.today,
     };
-  }, [myFilteredOrders, invoiceMapByOrderId, isMyIdentity, rateInfo, invoices]);
+  }, [myOrderRows, isMyIdentity, rateInfo, invoices]);
 
   // Copy Telegram reminder message for unpaid members
   const handleCopyReminder = (pOrd: PayerOrderRecord) => {
     if (!pOrd.unpaidMembers || pOrd.unpaidMembers.length === 0) return;
     const myName = profile?.full_name || profile?.username || user?.first_name || "the payer";
-    const dateFormatted = format(new Date(pOrd.order_date + "T00:00:00"), "d MMM yyyy");
+    const dateFormatted = format(parseDay(pOrd.order_date), "d MMM yyyy");
     const lines = [
       `📢 Lunch Payment Reminder (${dateFormatted})`,
       `Please scan KHQR to settle with ${myName}:`,
@@ -520,7 +529,7 @@ export default function MyOrdersPage() {
             <Button
               variant="secondary"
               size="sm"
-              onClick={loadData}
+              onClick={() => loadData()}
               disabled={loading}
               aria-label="Refresh"
               title="Refresh"
@@ -708,7 +717,7 @@ export default function MyOrdersPage() {
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-bold text-[var(--text)]">
-                          {format(new Date(pOrd.order_date + "T00:00:00"), "EEEE, MMM d, yyyy")}
+                          {format(parseDay(pOrd.order_date), "EEEE, MMM d, yyyy")}
                         </span>
                         {pOrd.chat_title && (
                           <Badge variant="member" className="text-[9px] py-0 px-1.5">
@@ -878,27 +887,12 @@ export default function MyOrdersPage() {
             />
           ) : (
             <>
-              {shownOrders.map((ord) => {
-                const inv = invoiceMapByOrderId.get(ord.order_id);
-                const isMeThePayer = isMyIdentity(ord.paid_by?.user_id, ord.paid_by?.username) || Boolean(inv?.is_payer);
-                const payer = inv?.payer_name || ord.paid_by?.username || "Not assigned";
-                const cachedInv = getInvoiceFromCache(ord.order_id) || (inv?.invoice_id ? getInvoiceFromCache(inv.invoice_id) : undefined);
-
-                const myDetail = cachedInv?.details ? cachedInv.details.find((d) => isMyIdentity(d.user_id, d.user_name)) : null;
-                let myOrderSubtotal = 0;
-                if (inv?.my_amount !== undefined && inv.my_amount > 0) {
-                  myOrderSubtotal = inv.my_amount;
-                } else if (myDetail) {
-                  myOrderSubtotal = myDetail.subtotal;
-                } else if (inv?.my_items?.length) {
-                  myOrderSubtotal = inv.my_items.reduce((sum, item) => sum + (item.cost || (item.price * (item.qty || 1))), 0);
-                }
-
-                const isPaid = isMeThePayer || Boolean(myDetail?.paid || inv?.my_paid);
-                const orderRate = inv?.usd_khr_rate && inv.usd_khr_rate > 0 ? inv.usd_khr_rate : (rateInfo?.usd_khr || 4047);
-                const myOrderSubtotalKHR = (inv?.my_amount_khr && inv.my_amount_khr > 0)
-                  ? inv.my_amount_khr
-                  : toKhr(myOrderSubtotal, orderRate, rateInfo?.khr_rounding || 100);
+              {shownOrders.map((row) => {
+                const { ord, inv, isMeThePayer, orderRate, owes, dueUSD } = row;
+                const payer = row.payerName || "Not assigned";
+                const myOrderSubtotal = row.amountUSD;
+                const myOrderSubtotalKHR = row.amountKHR;
+                const isPartlyPaid = owes && dueUSD < myOrderSubtotal - 0.009;
 
                 return (
                   <Card 
@@ -916,7 +910,7 @@ export default function MyOrdersPage() {
                     <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-[var(--border)] pb-1.5">
                       <div className="flex items-center gap-1.5">
                         <span className="text-xs font-bold text-[var(--color-primary)]">
-                          {format(new Date(ord.order_date + "T00:00:00"), "EEE, MMM d, yyyy")}
+                          {format(parseDay(ord.order_date), "EEE, MMM d, yyyy")}
                         </span>
                         {ord.chat_title && (
                           <Badge variant="member" className="text-[9px] py-0 px-1.5">
@@ -935,14 +929,14 @@ export default function MyOrdersPage() {
                             <Badge variant="admin" className="text-[10px] font-semibold px-1.5 py-0.2">
                               Payer: {payer}
                             </Badge>
-                            {ord.has_invoice ? (
-                              isPaid ? (
-                                <Badge variant="success" className="text-[9px] py-0 px-1.5 font-bold">
-                                  ✓ Paid
+                            {inv ? (
+                              owes ? (
+                                <Badge variant="danger" className="text-[9px] py-0 px-1.5 font-bold">
+                                  Owes {payer}{isPartlyPaid ? ` · $${dueUSD.toFixed(2)} left` : ""}
                                 </Badge>
                               ) : (
-                                <Badge variant="danger" className="text-[9px] py-0 px-1.5 font-bold">
-                                  Owes {payer}
+                                <Badge variant="success" className="text-[9px] py-0 px-1.5 font-bold">
+                                  ✓ Paid
                                 </Badge>
                               )
                             ) : (
@@ -966,13 +960,6 @@ export default function MyOrdersPage() {
                           let itemPrice: number | null = null;
                           if (inv?.my_items?.length) {
                             const matchedItem = inv.my_items.find(
-                              (dIt) => cleanDishName(dIt.item_name) === cleanName || dIt.item_name === dishName
-                            );
-                            if (matchedItem) itemPrice = matchedItem.cost || (matchedItem.price * qty);
-                          }
-                          if (itemPrice === null && cachedInv?.details) {
-                            const matchedDetail = cachedInv.details.find((d) => isMyIdentity(d.user_id, d.user_name));
-                            const matchedItem = matchedDetail?.items.find(
                               (dIt) => cleanDishName(dIt.item_name) === cleanName || dIt.item_name === dishName
                             );
                             if (matchedItem) itemPrice = matchedItem.cost || (matchedItem.price * qty);

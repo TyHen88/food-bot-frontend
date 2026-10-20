@@ -31,7 +31,7 @@ const QUICK_ACTIONS = [
   { href: "/settings", icon: Settings, label: "Settings", desc: "Configure global keys",
     iconClass: "bg-orange-50 dark:bg-orange-950/30 text-orange-500", adminOnly: true },
   { href: "/history", icon: History, label: "History", desc: "Audit logs & events",
-    iconClass: "bg-purple-50 dark:bg-purple-950/30 text-purple-500" },
+    iconClass: "bg-purple-50 dark:bg-purple-950/30 text-purple-500", adminOnly: true },
 ];
 
 export default function DashboardPage() {

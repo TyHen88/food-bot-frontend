@@ -23,7 +23,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { TopBar } from "@/components/layout/TopBar";
 import { DesktopHeader } from "@/components/layout/TopBar";
-import { useAuth } from "@/contexts/AuthContext";
+import { AdminGuard, useAuth } from "@/contexts/AuthContext";
 import { clsx } from "clsx";
 
 interface HistoryEvent {
@@ -163,6 +163,14 @@ function EventCard({ event }: { event: HistoryEvent }) {
 }
 
 export default function HistoryPage() {
+  return (
+    <AdminGuard>
+      <HistoryContent />
+    </AdminGuard>
+  );
+}
+
+function HistoryContent() {
   const { toast } = useToast();
   const { loading: authLoading } = useAuth();
   const [events, setEvents] = useState<HistoryEvent[]>([]);
