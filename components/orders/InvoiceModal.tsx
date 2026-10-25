@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { api } from "@/lib/api";
 import { fetchInvoiceWithCache, invalidateInvoiceCache } from "@/lib/invoiceCache";
-import { Send, CheckSquare, Square, Landmark } from "lucide-react";
+import { Send, CheckSquare, Square, Landmark, CreditCard } from "lucide-react";
 import { type Order } from "./OrderItemsEditor";
 
 interface InvoiceModalProps {
@@ -39,6 +39,24 @@ export function InvoiceModal({ open, onClose, order, onInvoiceSent }: InvoiceMod
   const [bulkPrice, setBulkPrice] = useState("");
   const [sending, setSending] = useState(false);
   const [rate, setRate] = useState<ExchangeRate | null>(null);
+
+  // Distinct diners participating in this order who could be the payer
+  const orderDiners = useMemo(() => {
+    const map = new Map<string, { user_id: string; name: string }>();
+    (order.items ?? []).forEach(it => {
+      const uid = it.user_id ? String(it.user_id).trim() : "";
+      const name = (it.name || "Guest").trim();
+      const key = uid || name;
+      if (!map.has(key)) {
+        map.set(key, { user_id: uid, name });
+      }
+    });
+    return Array.from(map.values());
+  }, [order.items]);
+
+  const [payerId, setPayerId] = useState<string>("");
+  const [payerName, setPayerName] = useState<string>("");
+
   /** Currency the admin TYPES prices in. Amounts are always sent to the
    *  backend in USD — riel input is converted here, so one stored price
    *  means the same thing however it was keyed. */
@@ -64,7 +82,7 @@ export function InvoiceModal({ open, onClose, order, onInvoiceSent }: InvoiceMod
         if (!cancelled) setRate(null);
       });
 
-    // If order already has an invoice, pre-fill prices and currencies
+    // If order already has an invoice, pre-fill prices, currencies and payer
     if (order.has_invoice) {
       fetchInvoiceWithCache(order.order_id, true)
         .then(inv => {
@@ -85,16 +103,22 @@ export function InvoiceModal({ open, onClose, order, onInvoiceSent }: InvoiceMod
             setSendUsd(inv.display_currencies.includes("USD"));
             setSendKhr(inv.display_currencies.includes("KHR"));
           }
+          if (inv.payer_user_id) setPayerId(inv.payer_user_id);
+          if (inv.payer_name) setPayerName(inv.payer_name);
         })
         .catch(err => {
           console.warn("Could not preload existing invoice data:", err);
         });
+    } else if (orderDiners.length > 0) {
+      // Default to the first diner
+      setPayerId(orderDiners[0].user_id);
+      setPayerName(orderDiners[0].name);
     }
 
     return () => {
       cancelled = true;
     };
-  }, [open, order.order_date, order.order_id, order.has_invoice]);
+  }, [open, order.order_date, order.order_id, order.has_invoice, orderDiners]);
 
   // Riel, rounded the same way the backend rounds it (nearest 100៛), so the
   // preview matches the invoice the group receives.
@@ -214,6 +238,8 @@ export function InvoiceModal({ open, onClose, order, onInvoiceSent }: InvoiceMod
           price: priceToUsd(prices[item.item_name] || "0"),
         })),
         currencies: [...(sendUsd ? ["USD"] : []), ...(sendKhr ? ["KHR"] : [])],
+        payer_user_id: payerId || undefined,
+        payer_name: payerName || undefined,
       };
 
       const result = await api.post<{ unpriced_items?: string[] }>(
@@ -313,6 +339,36 @@ export function InvoiceModal({ open, onClose, order, onInvoiceSent }: InvoiceMod
         ) : (
           <div className="p-3 rounded-[var(--radius-md)] text-[10px] bg-[var(--surface-2)] text-[var(--text-muted)]">
             No exchange rate available — this invoice will show US dollars only.
+          </div>
+        )}
+
+        {/* Designated Payer — who fronted the money for THIS specific order */}
+        {orderDiners.length > 0 && (
+          <div className="flex items-center justify-between gap-2 p-2.5 rounded-[var(--radius-md)] bg-[var(--surface-2)]/60 border border-[var(--border)]">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <CreditCard size={15} className="text-[var(--color-primary)] shrink-0" />
+              <div className="min-w-0">
+                <span className="text-xs font-bold text-[var(--text)] block truncate">Designated Payer</span>
+                <span className="text-[10px] text-[var(--text-muted)] block truncate">Who paid the restaurant upfront</span>
+              </div>
+            </div>
+            <select
+              value={payerId || payerName}
+              onChange={(e) => {
+                const selected = orderDiners.find(d => (d.user_id || d.name) === e.target.value);
+                if (selected) {
+                  setPayerId(selected.user_id);
+                  setPayerName(selected.name);
+                }
+              }}
+              className="text-xs font-medium px-2.5 py-1 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)] shrink-0"
+            >
+              {orderDiners.map((d, i) => (
+                <option key={i} value={d.user_id || d.name}>
+                  {d.name} {d.user_id ? `(#${d.user_id.slice(-4)})` : ""}
+                </option>
+              ))}
+            </select>
           </div>
         )}
 

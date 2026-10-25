@@ -61,6 +61,7 @@ interface DayMemberPayment {
   amount_khr?: number;
   paid_at?: string;
   payment_id?: string;
+  is_payer?: boolean;
   items?: Array<{ item_name?: string; qty?: number; price?: number }>;
 }
 
@@ -443,9 +444,9 @@ export default function DashboardPage() {
           </div>
 
           {/* Calendar Day Grid */}
-          <div className="grid grid-cols-7 gap-1 p-2 sm:p-2.5 bg-[var(--surface)]">
+          <div className="grid grid-cols-7 gap-1 p-1.5 sm:p-2 bg-[var(--surface)]">
             {Array.from({ length: firstDow }).map((_, i) => (
-              <div key={`empty-${i}`} className="min-h-[58px] sm:min-h-[74px] rounded-lg bg-transparent opacity-20" />
+              <div key={`empty-${i}`} className="min-h-[46px] sm:min-h-[54px] rounded-lg bg-transparent opacity-20" />
             ))}
 
             {days.map(day => {
@@ -460,7 +461,7 @@ export default function DashboardPage() {
                   key={key}
                   type="button"
                   onClick={() => handleSelectDay(day)}
-                  className={`relative flex flex-col justify-between p-1.5 sm:p-2 rounded-xl border transition-all text-left cursor-pointer min-h-[58px] sm:min-h-[74px] select-none ${
+                  className={`relative flex flex-col justify-between p-1 sm:p-1.5 rounded-lg border transition-all text-left cursor-pointer min-h-[46px] sm:min-h-[54px] select-none ${
                     isSelected
                       ? "border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/20 bg-[var(--color-primary)]/5 shadow-xs"
                       : today
@@ -472,9 +473,9 @@ export default function DashboardPage() {
                 >
                   {/* Date number header */}
                   <div className="flex items-center justify-between w-full">
-                    <span className={`text-xs font-bold leading-none ${
+                    <span className={`text-[11px] sm:text-xs font-bold leading-none ${
                       today
-                        ? "w-5 h-5 flex items-center justify-center rounded-full bg-[var(--color-primary)] text-white shadow-xs"
+                        ? "w-4 h-4 sm:w-5 sm:h-5 flex items-center justify-center rounded-full bg-[var(--color-primary)] text-white shadow-xs"
                         : isSelected
                         ? "text-[var(--color-primary)]"
                         : "text-[var(--text)]"
@@ -483,32 +484,32 @@ export default function DashboardPage() {
                     </span>
 
                     {hasOrders && (
-                      <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-[var(--surface-2)] text-[var(--text-muted)] border border-[var(--border)]">
+                      <span className="text-[8px] sm:text-[9px] font-bold px-1 py-0.2 rounded bg-[var(--surface-2)] text-[var(--text-muted)] border border-[var(--border)] leading-none">
                         {info.count}
                       </span>
                     )}
                   </div>
 
                   {/* Payment Status Pill on Calendar Tile */}
-                  <div className="mt-1 w-full">
+                  <div className="mt-0.5 w-full">
                     {hasOrders ? (
                       info.allPaid ? (
-                        <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 text-[9px] sm:text-[10px] font-bold border border-emerald-200 dark:border-emerald-800/40 truncate">
-                          <Check size={10} className="shrink-0" />
-                          <span className="truncate">All Paid</span>
+                        <div className="flex items-center gap-0.5 px-1 py-0.2 rounded bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 text-[8px] sm:text-[9px] font-bold border border-emerald-200 dark:border-emerald-800/40 truncate leading-tight">
+                          <Check size={8} className="shrink-0" />
+                          <span className="truncate">Paid</span>
                         </div>
                       ) : info.totalDue > 0 ? (
-                        <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 text-[9px] sm:text-[10px] font-bold border border-rose-200 dark:border-rose-800/40 truncate">
-                          <Clock size={10} className="shrink-0" />
-                          <span className="truncate">${info.totalDue.toFixed(2)} due</span>
+                        <div className="flex items-center gap-0.5 px-1 py-0.2 rounded bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 text-[8px] sm:text-[9px] font-bold border border-rose-200 dark:border-rose-800/40 truncate leading-tight">
+                          <Clock size={8} className="shrink-0" />
+                          <span className="truncate">${info.totalDue.toFixed(0)}</span>
                         </div>
                       ) : (
-                        <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 text-[9px] sm:text-[10px] font-bold border border-amber-200 dark:border-amber-800/40 truncate">
-                          <span>Pending</span>
+                        <div className="flex items-center gap-0.5 px-1 py-0.2 rounded bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 text-[8px] sm:text-[9px] font-bold border border-amber-200 dark:border-amber-800/40 truncate leading-tight">
+                          <span className="truncate">Pending</span>
                         </div>
                       )
                     ) : (
-                      <div className="h-4" />
+                      <div className="h-2" />
                     )}
                   </div>
                 </button>
@@ -547,197 +548,154 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* 4. MODAL: "Who's Has Paid" Day Breakdown */}
+        {/* 4. MODAL: "Who Has Paid" Day Breakdown */}
         <Modal
           open={!!selectedDay}
           onClose={() => setSelectedDay(null)}
-          title={selectedDay ? `📅 ${format(selectedDay, "EEEE, d MMMM yyyy")}` : "Day Details"}
-          maxWidth="640px"
+          title={selectedDay ? `📅 ${format(selectedDay, "d MMM yyyy")}` : "Day Details"}
+          maxWidth="480px"
         >
           {loadingDaySummary ? (
-            <div className="space-y-3 py-4">
-              <Skeleton className="h-16 w-full rounded-xl" />
-              <Skeleton className="h-10 w-full rounded-xl" />
-              <Skeleton className="h-24 w-full rounded-xl" />
-              <Skeleton className="h-24 w-full rounded-xl" />
+            <div className="space-y-2.5 py-2">
+              <Skeleton className="h-10 w-full rounded-lg" />
+              <Skeleton className="h-8 w-full rounded-lg" />
+              <Skeleton className="h-14 w-full rounded-lg" />
+              <Skeleton className="h-14 w-full rounded-lg" />
             </div>
           ) : !daySummary || (daySummary.orders.length === 0 && daySummary.paid_members.length === 0 && daySummary.unpaid_members.length === 0) ? (
-            <div className="text-center py-10 space-y-2">
-              <div className="w-12 h-12 mx-auto rounded-full bg-[var(--surface-2)] flex items-center justify-center text-[var(--text-muted)]">
-                <ShoppingBag size={24} />
+            <div className="text-center py-8 space-y-1.5">
+              <div className="w-10 h-10 mx-auto rounded-full bg-[var(--surface-2)] flex items-center justify-center text-[var(--text-muted)]">
+                <ShoppingBag size={20} />
               </div>
-              <p className="text-sm font-semibold text-[var(--text)] m-0">No Lunch Orders on this Day</p>
-              <p className="text-xs text-[var(--text-muted)] max-w-xs mx-auto">
-                No orders or payments were recorded for {selectedDay ? format(selectedDay, "d MMMM yyyy") : "this date"}.
+              <p className="text-xs font-semibold text-[var(--text)] m-0">No Lunch Orders on this Day</p>
+              <p className="text-[11px] text-[var(--text-muted)] max-w-xs mx-auto m-0">
+                No orders or payments recorded for {selectedDay ? format(selectedDay, "d MMM yyyy") : "this date"}.
               </p>
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {/* Financial KPI Summary Banner for this date */}
-              <div className="p-3.5 rounded-xl bg-[var(--surface-2)]/60 border border-[var(--border)] space-y-2.5">
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="p-2 rounded-lg bg-[var(--surface)] border border-[var(--border)]">
-                    <div className="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-wider">Total Lunch</div>
-                    <div className="text-base font-extrabold text-[var(--text)] mt-0.5">
-                      ${daySummary.total_spend.toFixed(2)}
-                    </div>
-                    <div className="text-[9px] text-[var(--text-muted)]">
-                      {daySummary.total_spend_khr ? `${daySummary.total_spend_khr.toLocaleString()} ៛` : ""}
-                    </div>
+              <div className="p-2.5 rounded-lg bg-[var(--surface-2)]/70 border border-[var(--border)] space-y-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <div>
+                    <span className="text-[10px] text-[var(--text-muted)] uppercase font-bold tracking-wider block">Total Lunch</span>
+                    <span className="font-extrabold text-sm text-[var(--text)] font-mono">${daySummary.total_spend.toFixed(2)}</span>
                   </div>
-
-                  <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/40">
-                    <div className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 uppercase tracking-wider">Paid & Settled</div>
-                    <div className="text-base font-extrabold text-emerald-600 dark:text-emerald-400 mt-0.5">
-                      ${daySummary.total_paid.toFixed(2)}
-                    </div>
-                    <div className="text-[9px] text-emerald-600/80 dark:text-emerald-400/80">
-                      {daySummary.paid_count} member(s)
-                    </div>
+                  <div className="text-center">
+                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 uppercase font-bold tracking-wider block">Paid ({daySummary.paid_count})</span>
+                    <span className="font-extrabold text-sm text-emerald-600 dark:text-emerald-400 font-mono">${daySummary.total_paid.toFixed(2)}</span>
                   </div>
-
-                  <div className="p-2 rounded-lg bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/40">
-                    <div className="text-[10px] font-bold text-rose-700 dark:text-rose-300 uppercase tracking-wider">Unpaid Due</div>
-                    <div className="text-base font-extrabold text-rose-600 dark:text-rose-400 mt-0.5">
-                      ${daySummary.total_due.toFixed(2)}
-                    </div>
-                    <div className="text-[9px] text-rose-600/80 dark:text-rose-400/80">
-                      {daySummary.unpaid_count} member(s)
-                    </div>
+                  <div className="text-right">
+                    <span className="text-[10px] text-rose-600 dark:text-rose-400 uppercase font-bold tracking-wider block">Due ({daySummary.unpaid_count})</span>
+                    <span className="font-extrabold text-sm text-rose-600 dark:text-rose-400 font-mono">${daySummary.total_due.toFixed(2)}</span>
                   </div>
                 </div>
-
-                {/* Progress bar */}
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-[10px] font-bold text-[var(--text-muted)]">
-                    <span>Payment Completion</span>
-                    <span>
-                      {daySummary.total_spend > 0
-                        ? `${Math.round((daySummary.total_paid / daySummary.total_spend) * 100)}%`
-                        : "100%"}
-                    </span>
-                  </div>
-                  <div className="w-full h-1.5 rounded-full bg-[var(--border)] overflow-hidden">
-                    <div
-                      className="h-full bg-emerald-500 rounded-full transition-all duration-300"
-                      style={{
-                        width: `${daySummary.total_spend > 0
-                          ? Math.min(100, Math.round((daySummary.total_paid / daySummary.total_spend) * 100))
-                          : 100}%`
-                      }}
-                    />
-                  </div>
+                <div className="w-full h-1 rounded-full bg-[var(--border)] overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                    style={{
+                      width: `${daySummary.total_spend > 0
+                        ? Math.min(100, Math.round((daySummary.total_paid / daySummary.total_spend) * 100))
+                        : 100}%`
+                    }}
+                  />
                 </div>
               </div>
 
               {/* Tab Selector: Who's Paid vs Who's Unpaid vs Orders */}
-              <div className="flex items-center gap-1.5 p-1 rounded-xl bg-[var(--surface-2)] border border-[var(--border)]">
+              <div className="flex items-center gap-1 p-0.5 rounded-lg bg-[var(--surface-2)] border border-[var(--border)]">
                 <button
                   type="button"
                   onClick={() => setDayModalTab("paid")}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg text-xs font-bold transition-all border-0 cursor-pointer ${
+                  className={`flex-1 flex items-center justify-center gap-1 py-1 px-2 rounded-md text-[11px] font-bold transition-all border-0 cursor-pointer ${
                     dayModalTab === "paid"
                       ? "bg-emerald-600 text-white shadow-xs"
                       : "bg-transparent text-[var(--text-muted)] hover:text-[var(--text)]"
                   }`}
                 >
-                  <UserCheck size={14} />
-                  <span>Who Has Paid ({daySummary.paid_members.length})</span>
+                  <UserCheck size={12} />
+                  <span>Paid ({daySummary.paid_members.length})</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setDayModalTab("unpaid")}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg text-xs font-bold transition-all border-0 cursor-pointer ${
+                  className={`flex-1 flex items-center justify-center gap-1 py-1 px-2 rounded-md text-[11px] font-bold transition-all border-0 cursor-pointer ${
                     dayModalTab === "unpaid"
                       ? "bg-rose-600 text-white shadow-xs"
                       : "bg-transparent text-[var(--text-muted)] hover:text-[var(--text)]"
                   }`}
                 >
-                  <UserX size={14} />
+                  <UserX size={12} />
                   <span>Not Paid ({daySummary.unpaid_members.length})</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setDayModalTab("orders")}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg text-xs font-bold transition-all border-0 cursor-pointer ${
+                  className={`flex-1 flex items-center justify-center gap-1 py-1 px-2 rounded-md text-[11px] font-bold transition-all border-0 cursor-pointer ${
                     dayModalTab === "orders"
                       ? "bg-[var(--color-primary)] text-white shadow-xs"
                       : "bg-transparent text-[var(--text-muted)] hover:text-[var(--text)]"
                   }`}
                 >
-                  <ShoppingBag size={14} />
+                  <ShoppingBag size={12} />
                   <span>Orders ({daySummary.orders.length})</span>
                 </button>
               </div>
 
               {/* Tab 1: Who Has Paid List */}
               {dayModalTab === "paid" && (
-                <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
+                <div className="space-y-1.5 max-h-[340px] overflow-y-auto pr-1">
                   {daySummary.paid_members.length === 0 ? (
-                    <div className="p-6 text-center rounded-xl bg-[var(--surface-2)]/40 border border-dashed border-[var(--border)] space-y-1">
+                    <div className="p-4 text-center rounded-lg bg-[var(--surface-2)]/40 border border-dashed border-[var(--border)] space-y-0.5">
                       <p className="text-xs font-bold text-[var(--text-muted)] m-0">No Payments Recorded Yet</p>
-                      <p className="text-[11px] text-[var(--text-muted)] m-0">
-                        None of the diners on this date have a verified ABA PayWay transaction or admin settlement.
+                      <p className="text-[10px] text-[var(--text-muted)] m-0">
+                        None of the diners on this date have a verified payment record.
                       </p>
                     </div>
                   ) : (
                     daySummary.paid_members.map((m, idx) => (
-                      <Card
+                      <div
                         key={`${m.user_id || m.user_name}-${idx}`}
-                        variant="flat"
-                        padding="sm"
-                        className="border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/20 dark:bg-emerald-950/10 space-y-2"
+                        className="flex items-center justify-between gap-2 p-2 rounded-lg border border-emerald-100 dark:border-emerald-900/40 bg-emerald-50/20 dark:bg-emerald-950/10 transition-colors"
                       >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <div className="w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 font-bold text-xs flex items-center justify-center shrink-0">
-                              {(m.user_name || "U").charAt(0).toUpperCase()}
-                            </div>
-                            <div className="min-w-0">
-                              <div className="text-xs font-bold text-[var(--text)] truncate">
-                                {m.user_name}
-                              </div>
-                              <div className="text-[10px] text-[var(--text-muted)] flex items-center gap-1.5">
-                                {m.payment_id ? (
-                                  <span className="font-mono truncate">Ref: {m.payment_id}</span>
-                                ) : (
-                                  <span>Settled</span>
-                                )}
-                                {m.paid_at && (
-                                  <span>• {format(new Date(m.paid_at), "HH:mm")}</span>
-                                )}
-                              </div>
-                            </div>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 font-bold text-[10px] flex items-center justify-center shrink-0">
+                            {(m.user_name || "U").charAt(0).toUpperCase()}
                           </div>
-
-                          <div className="text-right shrink-0">
-                            <div className="text-sm font-extrabold text-emerald-600 dark:text-emerald-400 font-mono">
-                              ${m.amount.toFixed(2)}
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1 truncate">
+                              <span className="text-xs font-bold text-[var(--text)] truncate">{m.user_name}</span>
+                              {m.is_payer ? (
+                                <span className="text-[9px] font-bold px-1 py-0.2 rounded bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300 shrink-0">
+                                  Payer
+                                </span>
+                              ) : (
+                                <span className="text-[9px] font-bold px-1 py-0.2 rounded bg-[var(--surface-2)] text-[var(--text-muted)] shrink-0">
+                                  ✓ Paid
+                                </span>
+                              )}
                             </div>
-                            {m.amount_khr && (
-                              <div className="text-[10px] text-[var(--text-muted)] font-mono">
-                                {m.amount_khr.toLocaleString()} ៛
+                            {m.items && m.items.length > 0 && (
+                              <div className="text-[10px] text-[var(--text-muted)] truncate">
+                                {m.items.map(it => `${it.qty && it.qty > 1 ? `${it.qty}x ` : ""}${it.item_name}`).join(", ")}
                               </div>
                             )}
                           </div>
                         </div>
 
-                        {/* Dishes list */}
-                        {m.items && m.items.length > 0 && (
-                          <div className="flex flex-wrap gap-1 pt-1 border-t border-emerald-200/50 dark:border-emerald-900/30">
-                            {m.items.map((it, i) => (
-                              <span
-                                key={i}
-                                className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-[var(--surface)] text-[var(--text)] border border-[var(--border)]"
-                              >
-                                {it.qty && it.qty > 1 ? `${it.qty}x ` : ""}{it.item_name || "Dish"}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </Card>
+                        <div className="text-right shrink-0">
+                          <span className="text-xs font-bold font-mono text-emerald-600 dark:text-emerald-400 block">
+                            ${m.amount.toFixed(2)}
+                          </span>
+                          {m.amount_khr && (
+                            <span className="text-[9px] text-[var(--text-muted)] font-mono block">
+                              {m.amount_khr.toLocaleString()} ៛
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     ))
                   )}
                 </div>
@@ -745,91 +703,69 @@ export default function DashboardPage() {
 
               {/* Tab 2: Who Has Not Paid List */}
               {dayModalTab === "unpaid" && (
-                <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
+                <div className="space-y-1.5 max-h-[340px] overflow-y-auto pr-1">
                   {daySummary.unpaid_members.length === 0 ? (
-                    <div className="p-6 text-center rounded-xl bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 space-y-1">
-                      <div className="w-9 h-9 mx-auto rounded-full bg-emerald-100 dark:bg-emerald-900/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
-                        <Check size={18} />
-                      </div>
+                    <div className="p-4 text-center rounded-lg bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 space-y-0.5">
                       <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300 m-0">All Lunch Orders Settled!</p>
-                      <p className="text-[11px] text-emerald-600/80 dark:text-emerald-400/80 m-0">
+                      <p className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80 m-0">
                         Everyone on this day has completed their lunch payment.
                       </p>
                     </div>
                   ) : (
                     daySummary.unpaid_members.map((m, idx) => (
-                      <Card
+                      <div
                         key={`${m.user_id || m.user_name}-${idx}`}
-                        variant="flat"
-                        padding="sm"
-                        className="border border-rose-200 dark:border-rose-900/50 bg-rose-50/20 dark:bg-rose-950/10 space-y-2.5"
+                        className="flex items-center justify-between gap-2 p-2 rounded-lg border border-rose-100 dark:border-rose-900/40 bg-rose-50/20 dark:bg-rose-950/10 transition-colors"
                       >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <div className="w-8 h-8 rounded-full bg-rose-100 dark:bg-rose-900/50 text-rose-700 dark:text-rose-300 font-bold text-xs flex items-center justify-center shrink-0">
-                              {(m.user_name || "U").charAt(0).toUpperCase()}
-                            </div>
-                            <div className="min-w-0">
-                              <div className="text-xs font-bold text-[var(--text)] truncate">
-                                {m.user_name}
-                              </div>
-                              <div className="text-[10px] text-rose-600 dark:text-rose-400 font-semibold">
-                                Pending payment
-                              </div>
-                            </div>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-6 h-6 rounded-full bg-rose-100 dark:bg-rose-900/50 text-rose-700 dark:text-rose-300 font-bold text-[10px] flex items-center justify-center shrink-0">
+                            {(m.user_name || "U").charAt(0).toUpperCase()}
                           </div>
-
-                          <div className="text-right shrink-0">
-                            <div className="text-sm font-extrabold text-rose-600 dark:text-rose-400 font-mono">
-                              ${m.due.toFixed(2)}
-                            </div>
-                            {m.due_khr && (
-                              <div className="text-[10px] text-[var(--text-muted)] font-mono">
-                                {m.due_khr.toLocaleString()} ៛
+                          <div className="min-w-0">
+                            <span className="text-xs font-bold text-[var(--text)] truncate block">{m.user_name}</span>
+                            {m.items && m.items.length > 0 && (
+                              <div className="text-[10px] text-[var(--text-muted)] truncate">
+                                {m.items.map(it => `${it.qty && it.qty > 1 ? `${it.qty}x ` : ""}${it.item_name}`).join(", ")}
                               </div>
                             )}
                           </div>
                         </div>
 
-                        {/* Dishes list */}
-                        {m.items && m.items.length > 0 && (
-                          <div className="flex flex-wrap gap-1">
-                            {m.items.map((it, i) => (
-                              <span
-                                key={i}
-                                className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-[var(--surface)] text-[var(--text)] border border-[var(--border)]"
-                              >
-                                {it.qty && it.qty > 1 ? `${it.qty}x ` : ""}{it.item_name || "Dish"}
+                        <div className="flex items-center gap-2 shrink-0">
+                          <div className="text-right">
+                            <span className="text-xs font-bold font-mono text-rose-600 dark:text-rose-400 block">
+                              ${m.due.toFixed(2)}
+                            </span>
+                            {m.due_khr && (
+                              <span className="text-[9px] text-[var(--text-muted)] font-mono block">
+                                {m.due_khr.toLocaleString()} ៛
                               </span>
-                            ))}
+                            )}
                           </div>
-                        )}
 
-                        {/* Action buttons: Copy Telegram reminder + Mark as Paid (admin) */}
-                        <div className="flex items-center justify-end gap-1.5 pt-1 border-t border-rose-200/50 dark:border-rose-900/30">
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            className="text-[11px] h-7 gap-1 px-2.5 rounded-md"
-                            onClick={() => handleCopyReminder(m)}
-                          >
-                            <Share2 size={12} />
-                            <span>Copy Reminder</span>
-                          </Button>
-
-                          {isAdmin && (
-                            <Button
-                              size="sm"
-                              variant="primary"
-                              className="text-[11px] h-7 gap-1 px-2.5 rounded-md bg-emerald-600 hover:bg-emerald-700"
-                              onClick={() => setSettleMemberTarget(m)}
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleCopyReminder(m)}
+                              className="w-6 h-6 flex items-center justify-center rounded border border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] hover:text-[var(--text)] cursor-pointer transition-colors"
+                              title="Copy Telegram Reminder"
                             >
-                              <Check size={12} />
-                              <span>Mark Paid</span>
-                            </Button>
-                          )}
+                              <Share2 size={11} />
+                            </button>
+                            {isAdmin && (
+                              <button
+                                type="button"
+                                onClick={() => setSettleMemberTarget(m)}
+                                className="h-6 px-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] flex items-center gap-0.5 cursor-pointer border-0 shadow-2xs transition-colors"
+                                title="Mark Paid"
+                              >
+                                <Check size={11} />
+                                <span>Paid</span>
+                              </button>
+                            )}
+                          </div>
                         </div>
-                      </Card>
+                      </div>
                     ))
                   )}
                 </div>
@@ -837,10 +773,10 @@ export default function DashboardPage() {
 
               {/* Tab 3: Day Orders & Items */}
               {dayModalTab === "orders" && (
-                <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1">
+                <div className="space-y-2 max-h-[340px] overflow-y-auto pr-1">
                   {daySummary.orders.map(o => (
-                    <Card key={o.order_id} variant="flat" padding="sm" className="space-y-2 border border-[var(--border)]">
-                      <div className="flex items-center justify-between gap-2 pb-1.5 border-b border-[var(--border)]">
+                    <div key={o.order_id} className="p-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] space-y-1">
+                      <div className="flex items-center justify-between gap-2 pb-1 border-b border-[var(--border)]">
                         <div className="min-w-0">
                           <span className="text-xs font-bold text-[var(--text)] truncate block">
                             {o.chat_title || `Order #${o.order_id.slice(-6)}`}
@@ -856,7 +792,7 @@ export default function DashboardPage() {
                           <Button
                             size="sm"
                             variant="secondary"
-                            className="text-[10px] h-6 px-2 gap-1"
+                            className="text-[10px] h-6 px-2 gap-1 rounded"
                             onClick={() => setViewInvoiceId(o.invoice_id || o.order_id)}
                           >
                             <Receipt size={11} />
@@ -876,7 +812,7 @@ export default function DashboardPage() {
                           }}
                         />
                       )}
-                    </Card>
+                    </div>
                   ))}
                 </div>
               )}

@@ -358,10 +358,11 @@ export function MemberSpendModal({
 
     memberFilteredOrders.forEach((ord) => {
       const inv = invoiceMapByOrderId.get(ord.order_id);
-      const isPayerSelf = isMemberIdentity(ord.paid_by?.user_id, ord.paid_by?.username) || 
-                          isMemberIdentity(inv?.payer_user_id, inv?.payer_name) ||
-                          Boolean(inv?.is_payer);
-      const payerName = isPayerSelf ? "Self (Payer)" : (inv?.payer_name || ord.paid_by?.username || "Unknown Payer");
+      const isPayerSelf = Boolean(
+        (inv?.payer_user_id && isMemberIdentity(inv.payer_user_id, inv.payer_name)) ||
+        Boolean(inv?.is_payer)
+      );
+      const payerName = isPayerSelf ? "Self (Payer)" : (inv?.payer_name || "Unknown Payer");
 
       const orderRate = inv?.usd_khr_rate && inv.usd_khr_rate > 0 ? inv.usd_khr_rate : activeRate;
 
@@ -483,9 +484,10 @@ export function MemberSpendModal({
     memberFilteredOrders.forEach((ord) => {
       if (!ord.has_invoice) return;
       const inv = invoiceMapByOrderId.get(ord.order_id);
-      const isPayerSelf = isMemberIdentity(ord.paid_by?.user_id, ord.paid_by?.username) || 
-                          isMemberIdentity(inv?.payer_user_id, inv?.payer_name) ||
-                          Boolean(inv?.is_payer);
+      const isPayerSelf = Boolean(
+        (inv?.payer_user_id && isMemberIdentity(inv.payer_user_id, inv.payer_name)) ||
+        Boolean(inv?.is_payer)
+      );
       if (isPayerSelf) return;
       unpaidInvoiceIds.push(inv?.invoice_id || ord.order_id);
     });
@@ -854,10 +856,11 @@ export function MemberSpendModal({
             <div className="space-y-2.5">
               {shownOrders.map((ord) => {
                 const inv = invoiceMapByOrderId.get(ord.order_id);
-                const isPayerSelf = isMemberIdentity(ord.paid_by?.user_id, ord.paid_by?.username) || 
-                                    isMemberIdentity(inv?.payer_user_id, inv?.payer_name) ||
-                                    Boolean(inv?.is_payer);
-                const payer = inv?.payer_name || ord.paid_by?.username || "Payer";
+                const isPayerSelf = Boolean(
+                  (inv?.payer_user_id && isMemberIdentity(inv.payer_user_id, inv.payer_name)) ||
+                  Boolean(inv?.is_payer)
+                );
+                const payer = inv?.payer_name || "Payer";
                 const cachedInv = getInvoiceFromCache(ord.order_id) || (inv?.invoice_id ? getInvoiceFromCache(inv.invoice_id) : undefined);
 
                 let orderSubtotal = 0;

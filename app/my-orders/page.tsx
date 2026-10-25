@@ -322,8 +322,11 @@ export default function MyOrdersPage() {
     const rounding = rateInfo?.khr_rounding || 100;
     return myFilteredOrders.map((ord) => {
       const inv = invoiceMapByOrderId.get(ord.order_id);
-      const isMeThePayer = isMyIdentity(ord.paid_by?.user_id, ord.paid_by?.username) || Boolean(inv?.is_payer);
-      const payerName = inv?.payer_name || ord.paid_by?.username || "";
+      const isMeThePayer = Boolean(
+        (inv?.payer_user_id && isMyIdentity(inv.payer_user_id, inv.payer_name)) ||
+        Boolean(inv?.is_payer)
+      );
+      const payerName = inv?.payer_name || "";
       const orderRate = inv?.usd_khr_rate && inv.usd_khr_rate > 0 ? inv.usd_khr_rate : fallbackRate;
       const amountUSD = inv?.my_amount ?? 0;
       // my_due is what's left after partial payments; read strictly from invoice
