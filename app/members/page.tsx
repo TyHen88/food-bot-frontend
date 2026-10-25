@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { formatDistanceToNow, parseISO } from "date-fns";
 import { api } from "@/lib/api";
-import { chatIdQuery } from "@/lib/telegram";
+import { chatIdQuery, launchChatId } from "@/lib/telegram";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/components/ui/Toast";
 import { Card } from "@/components/ui/Card";
@@ -146,6 +146,8 @@ interface PaginatedMembersResponse {
   page: number;
   page_size: number;
   total_pages: number;
+  chat_id?: string;
+  chat_title?: string;
   stats: {
     total: number;
     admins: number;
@@ -153,6 +155,8 @@ interface PaginatedMembersResponse {
     total_debt: number;
     total_receivables?: number;
     total_payers_waiting?: number;
+    chat_id?: string;
+    chat_title?: string;
   };
 }
 
@@ -161,7 +165,7 @@ const PAGE_SIZE = 50;
 type FilterTab = "all" | "debtors" | "payers" | "settled";
 
 export default function MembersPage() {
-  const { loading: authLoading, isAdmin } = useAuth();
+  const { loading: authLoading, isAdmin, profile } = useAuth();
   const { toast } = useToast();
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
@@ -169,6 +173,8 @@ export default function MembersPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
+  const [currentChatId, setCurrentChatId] = useState<string>("");
+  const [currentChatTitle, setCurrentChatTitle] = useState<string>("");
   const [stats, setStats] = useState({
     total: 0,
     admins: 0,
@@ -211,13 +217,19 @@ export default function MembersPage() {
     else setLoadingMore(true);
 
     try {
+      const activeChatId = launchChatId() || (profile?.chat_id ? String(profile.chat_id).trim() : "");
+      if (activeChatId && !currentChatId) {
+        setCurrentChatId(activeChatId);
+      }
+
       const params = new URLSearchParams();
       params.set("page", String(pageNum));
       params.set("page_size", String(PAGE_SIZE));
+      if (activeChatId) params.set("chat_id", activeChatId);
       if (query.trim()) params.set("search", query.trim());
 
       const res = await api.get<PaginatedMembersResponse | Member[]>(
-        `/members?${params.toString()}${chatIdQuery()}`
+        `/members?${params.toString()}`
       );
 
       if (res && "items" in res) {
@@ -226,6 +238,10 @@ export default function MembersPage() {
         setTotalCount(res.total ?? 0);
         setTotalPages(res.total_pages ?? 1);
         setPage(res.page ?? pageNum);
+        if (res.chat_id) setCurrentChatId(res.chat_id);
+        if (res.chat_title) setCurrentChatTitle(res.chat_title);
+        else if (res.stats?.chat_title) setCurrentChatTitle(res.stats.chat_title);
+
         if (res.stats) {
           setStats({
             total: res.stats.total ?? 0,
@@ -247,7 +263,7 @@ export default function MembersPage() {
       setLoading(false);
       setLoadingMore(false);
     }
-  }, [debouncedSearch, toast]);
+  }, [debouncedSearch, profile?.chat_id, currentChatId, toast]);
 
   // Wait for AuthContext before initial fetch & reload on search change
   useEffect(() => {
@@ -287,8 +303,10 @@ export default function MembersPage() {
   const handleSettleMember = async (member: Member) => {
     setSettlingUserId(member.user_id);
     try {
+      const activeChatId = currentChatId || launchChatId() || (profile?.chat_id ? String(profile.chat_id).trim() : "");
+      const queryStr = activeChatId ? `?chat_id=${encodeURIComponent(activeChatId)}` : "";
       const res = await api.post<{ settled_invoices_count: number; settled_amount: number }>(
-        `/members/${member.user_id}/settle`,
+        `/members/${member.user_id}/settle${queryStr}`,
         {}
       );
       toast(
@@ -311,12 +329,14 @@ export default function MembersPage() {
     }
     setBulkSettling(true);
     try {
+      const activeChatId = currentChatId || launchChatId() || (profile?.chat_id ? String(profile.chat_id).trim() : "");
+      const queryStr = activeChatId ? `?chat_id=${encodeURIComponent(activeChatId)}` : "";
       const targetIds = debtMembers.length > 0 ? debtMembers.map((m) => m.user_id) : [];
       const res = await api.post<{
         settled_users_count: number;
         settled_invoices_count: number;
         settled_amount: number;
-      }>("/members/settle-bulk", {
+      }>(`/members/settle-bulk${queryStr}`, {
         user_ids: targetIds,
       });
       toast(
@@ -397,14 +417,19 @@ export default function MembersPage() {
     <>
       {/* ── Mobile Sticky Header ────────────────────────────────────── */}
       <header className="sm:hidden sticky top-0 z-30 flex items-center justify-between px-4 py-3 bg-[var(--surface)]/95 backdrop-blur-md border-b border-[var(--border)] transition-colors">
-        <div className="flex items-center gap-2">
-          <h1 className="text-base font-bold tracking-tight text-[var(--text)]">Members</h1>
-          <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-[var(--surface-2)] text-[var(--text-muted)]">
+        <div className="flex items-center gap-2 min-w-0">
+          <h1 className="text-base font-bold tracking-tight text-[var(--text)] shrink-0">Members</h1>
+          <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-[var(--surface-2)] text-[var(--text-muted)] shrink-0">
             {totalCount || members.length}
           </span>
+          {(currentChatTitle || currentChatId) && (
+            <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-[var(--brand-muted)] text-[var(--brand)] border border-[var(--brand)]/20 truncate max-w-[130px]">
+              {currentChatTitle || `Group ${currentChatId}`}
+            </span>
+          )}
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0">
           {isAdmin && stats.totalDebt > 0.009 && (
             <Button
               size="sm"
@@ -459,6 +484,11 @@ export default function MembersPage() {
               <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-[var(--surface-2)] text-[var(--text-muted)]">
                 {totalCount || members.length} total
               </span>
+              {(currentChatTitle || currentChatId) && (
+                <span className="text-xs font-medium px-2.5 py-0.5 rounded-full bg-[var(--brand-muted)] text-[var(--brand)] border border-[var(--brand)]/20">
+                  📍 {currentChatTitle || `Chat Group: ${currentChatId}`}
+                </span>
+              )}
             </div>
             <p className="text-xs text-[var(--text-muted)] font-medium">
               Manage participant balances, track unpaid lunch debts, and ABA account info

@@ -18,6 +18,7 @@ interface MeResponse {
   role: string;
   is_admin: boolean;
   language?: string;
+  chat_id?: string;
 }
 
 interface AuthState {

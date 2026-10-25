@@ -67,6 +67,20 @@ export function getTelegramUser(): TelegramUser | null {
   return getTelegramWebApp()?.initDataUnsafe?.user ?? null;
 }
 
+let cachedChatId = "";
+
+export function setLaunchChatId(id: string): void {
+  const clean = (id || "").trim();
+  if (!clean) return;
+  cachedChatId = clean;
+  if (typeof window !== "undefined") {
+    try {
+      sessionStorage.setItem("fb_chat_id", clean);
+      localStorage.setItem("fb_chat_id", clean);
+    } catch (_) {}
+  }
+}
+
 function getStartParam(): string {
   const fromSdk = getTelegramWebApp()?.initDataUnsafe?.start_param;
   if (fromSdk) return fromSdk;
@@ -82,16 +96,57 @@ function getStartParam(): string {
  * The group chat id this Mini App launch is scoped to, or "" when opened
  * outside a group (bot DM, dev browser). Reverses encode_chat_param() in
  * backend/bot/handlers.py: "g<digits>" → negative id, "c<digits>" → positive.
+ * Persists in sessionStorage / localStorage across Next.js page transitions.
  */
 export function launchChatId(): string {
+  if (cachedChatId) return cachedChatId;
+
+  // 1. Direct URL search parameters (?chat_id= or ?chatId=)
+  if (typeof window !== "undefined") {
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const urlId = sp.get("chat_id") || sp.get("chatId");
+      if (urlId && urlId.trim()) {
+        setLaunchChatId(urlId.trim());
+        return cachedChatId;
+      }
+    } catch (_) {}
+  }
+
+  // 2. Telegram WebApp start_param or tgWebAppStartParam
   const p = getStartParam();
-  let m = /^g(\d+)$/.exec(p);
-  if (m) return `-${m[1]}`;
-  m = /^c(\d+)$/.exec(p);
-  if (m) return m[1];
-  if (/^-?\d+$/.test(p)) return p; // tolerate a raw chat id
+  if (p) {
+    let resolved = "";
+    const mg = /^g(\d+)$/.exec(p);
+    if (mg) resolved = `-${mg[1]}`;
+    const mc = /^c(\d+)$/.exec(p);
+    if (mc) resolved = mc[1];
+    if (/^-?\d+$/.test(p)) resolved = p; // tolerate a raw chat id
+    if (resolved) {
+      setLaunchChatId(resolved);
+      return cachedChatId;
+    }
+  }
+
+  // 3. Telegram WebApp chat object
   const chat = getTelegramWebApp()?.initDataUnsafe?.chat;
-  return chat?.id != null ? String(chat.id) : "";
+  if (chat?.id != null) {
+    setLaunchChatId(String(chat.id));
+    return cachedChatId;
+  }
+
+  // 4. Session / Local storage fallback from previous page in session
+  if (typeof window !== "undefined") {
+    try {
+      const stored = sessionStorage.getItem("fb_chat_id") || localStorage.getItem("fb_chat_id");
+      if (stored && stored.trim()) {
+        cachedChatId = stored.trim();
+        return cachedChatId;
+      }
+    } catch (_) {}
+  }
+
+  return "";
 }
 
 /** "&chat_id=..." query fragment for API calls, or "" outside a group. */
