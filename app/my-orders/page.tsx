@@ -326,9 +326,8 @@ export default function MyOrdersPage() {
       const payerName = inv?.payer_name || ord.paid_by?.username || "";
       const orderRate = inv?.usd_khr_rate && inv.usd_khr_rate > 0 ? inv.usd_khr_rate : fallbackRate;
       const amountUSD = inv?.my_amount ?? 0;
-      // my_due is what's left after partial payments; a response without it
-      // (backend not yet redeployed) falls back to all-or-nothing on my_paid.
-      const dueUSD = !inv || isMeThePayer ? 0 : (inv.my_due ?? (inv.my_paid ? 0 : amountUSD));
+      // my_due is what's left after partial payments; read strictly from invoice
+      const dueUSD = !inv ? 0 : (inv.my_due ?? (inv.my_paid ? 0 : amountUSD));
       const amountKHR = inv?.my_amount_khr && inv.my_amount_khr > 0
         ? inv.my_amount_khr
         : toKhr(amountUSD, orderRate, rounding);
@@ -920,31 +919,30 @@ export default function MyOrdersPage() {
                       </div>
 
                       <div className="flex items-center gap-1.5">
-                        {isMeThePayer ? (
-                          <Badge variant="success" className="text-[10px] font-bold px-1.5 py-0.2">
-                            ✓ Paid (You are Payer)
+                        {isMeThePayer && (
+                          <Badge variant="member" className="text-[10px] font-semibold px-1.5 py-0.2">
+                            Ordered by You
                           </Badge>
-                        ) : (
-                          <>
-                            <Badge variant="admin" className="text-[10px] font-semibold px-1.5 py-0.2">
-                              Payer: {payer}
+                        )}
+                        {!isMeThePayer && payer && (
+                          <Badge variant="admin" className="text-[10px] font-semibold px-1.5 py-0.2">
+                            Payer: {payer}
+                          </Badge>
+                        )}
+                        {inv ? (
+                          owes ? (
+                            <Badge variant="danger" className="text-[9px] py-0 px-1.5 font-bold">
+                              Owes {payer ? `${payer}` : "Lunch"}{isPartlyPaid ? ` · $${dueUSD.toFixed(2)} left` : ""}
                             </Badge>
-                            {inv ? (
-                              owes ? (
-                                <Badge variant="danger" className="text-[9px] py-0 px-1.5 font-bold">
-                                  Owes {payer}{isPartlyPaid ? ` · $${dueUSD.toFixed(2)} left` : ""}
-                                </Badge>
-                              ) : (
-                                <Badge variant="success" className="text-[9px] py-0 px-1.5 font-bold">
-                                  ✓ Paid
-                                </Badge>
-                              )
-                            ) : (
-                              <Badge variant="default" className="text-[9px] py-0 px-1.5">
-                                Pending Invoice
-                              </Badge>
-                            )}
-                          </>
+                          ) : (
+                            <Badge variant="success" className="text-[9px] py-0 px-1.5 font-bold">
+                              ✓ Paid
+                            </Badge>
+                          )
+                        ) : (
+                          <Badge variant="default" className="text-[9px] py-0 px-1.5">
+                            Pending Invoice
+                          </Badge>
                         )}
                       </div>
                     </div>

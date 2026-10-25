@@ -282,9 +282,9 @@ export default function OrdersPage() {
               <Wallet size={18} />
             </div>
             <div className="min-w-0">
-              <div className="text-[10px] font-semibold text-[var(--text-muted)] leading-tight">Paid by</div>
+              <div className="text-[10px] font-semibold text-[var(--text-muted)] leading-tight">Ordered by</div>
               <div className="text-sm font-bold text-[var(--text)] truncate">{stats.payer}</div>
-              <div className="text-[9px] text-[var(--text-muted)] mt-0.5">Payment</div>
+              <div className="text-[9px] text-[var(--text-muted)] mt-0.5">Poll owner</div>
             </div>
           </Card>
         </div>
@@ -374,7 +374,7 @@ export default function OrdersPage() {
                       </h2>
                       {g.orders[0]?.paid_by?.username && (
                         <p className="text-[10px] text-[var(--text-muted)] font-medium">
-                          Paid by: <span className="text-[var(--color-primary)] font-semibold">{g.orders[0].paid_by.username}</span>
+                          Ordered by: <span className="text-[var(--color-primary)] font-semibold">{g.orders[0].paid_by.username}</span>
                         </p>
                       )}
                     </div>
