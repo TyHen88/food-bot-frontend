@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, ShoppingBag, BookTemplate, CalendarClock,
-  Users, Settings, History, ChevronLeft, ChevronRight, UtensilsCrossed, Receipt, UserCheck,
+  Users, Settings, History, ChevronLeft, ChevronRight, UtensilsCrossed, Receipt, UserCheck, CreditCard,
 } from "lucide-react";
 import { clsx } from "clsx";
 import { useState } from "react";
@@ -24,6 +24,7 @@ const NAV: NavItem[] = [
   { href: "/orders",    icon: <ShoppingBag size={18} />,     label: "Orders" },
   { href: "/my-orders", icon: <UserCheck size={18} />,       label: "My Orders" },
   { href: "/invoices",  icon: <Receipt size={18} />,         label: "Invoices" },
+  { href: "/payments",  icon: <CreditCard size={18} />,      label: "Payments" },
   { href: "/templates", icon: <BookTemplate size={18} />,    label: "Templates", adminOnly: true },
   { href: "/schedule",  icon: <CalendarClock size={18} />,   label: "Schedule",  adminOnly: true },
   { href: "/members",   icon: <Users size={18} />,           label: "Members" },

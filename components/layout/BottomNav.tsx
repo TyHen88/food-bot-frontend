@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  LayoutDashboard, ShoppingBag, Users, CalendarClock, Receipt, UserCheck, type LucideIcon,
+  LayoutDashboard, ShoppingBag, Users, CalendarClock, Receipt, UserCheck, CreditCard, type LucideIcon,
 } from "lucide-react";
 import { clsx } from "clsx";
 import { useAuth } from "@/contexts/AuthContext";
@@ -21,7 +21,7 @@ const NAV: NavItem[] = [
   { href: "/orders",    icon: ShoppingBag,     label: "Orders" },
   { href: "/my-orders", icon: UserCheck,       label: "My Orders" },
   { href: "/invoices",  icon: Receipt,         label: "Invoices" },
-  { href: "/schedule",  icon: CalendarClock,   label: "Schedule", adminOnly: true },
+  { href: "/payments",  icon: CreditCard,      label: "Payments" },
   { href: "/members",   icon: Users,           label: "Members" },
 ];
 
