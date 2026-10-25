@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  LayoutDashboard, ShoppingBag, Users, CalendarClock, Receipt, UserCheck, CreditCard, type LucideIcon,
+  LayoutDashboard, ShoppingBag, Users, Receipt, UserCheck, CreditCard, type LucideIcon,
 } from "lucide-react";
 import { clsx } from "clsx";
 import { useAuth } from "@/contexts/AuthContext";
