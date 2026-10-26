@@ -12,7 +12,9 @@ import {
   Landmark, 
   DollarSign, 
   RefreshCw,
-  Search
+  Search,
+  FilePlus2,
+  Clock
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { chatIdQuery } from "@/lib/telegram";
@@ -74,6 +76,8 @@ interface PaginatedInvoicesResponse {
 }
 
 type QuickFilter = "today" | "week" | "month" | "all" | "custom";
+/** "sent" = invoices already generated; "pending" = orders with no invoice yet. */
+type InvoiceView = "sent" | "pending";
 
 const PAGE_SIZE = 10;
 
@@ -105,6 +109,8 @@ export default function InvoicesPage() {
   const [stats, setStats] = useState({ orders: 0, amount: 0, amountKhr: 0 });
   const [viewId, setViewId] = useState<string | null>(null);
   const [editingOrder, setEditingOrder] = useState<Order | null>(null);
+  const [view, setView] = useState<InvoiceView>("sent");
+  const [pendingOrders, setPendingOrders] = useState<Order[]>([]);
 
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("all");
   const [fromDate, setFromDate] = useState("");
@@ -125,13 +131,31 @@ export default function InvoicesPage() {
       if (toDate) params.set("to", toDate);
       if (searchQuery.trim()) params.set("search", searchQuery.trim());
 
-      const [invoicesRes, exchangeRateRes] = await Promise.all([
+      // Orders with no invoice yet ("Not generated"). Same date range; only
+      // fetched with the first page — later pages are invoices only.
+      const orderParams = new URLSearchParams();
+      if (fromDate) orderParams.set("from", fromDate);
+      if (toDate) orderParams.set("to", toDate);
+
+      const [invoicesRes, exchangeRateRes, ordersRes] = await Promise.all([
         api.get<PaginatedInvoicesResponse | InvoiceRow[]>(`/invoices?${params.toString()}${chatIdQuery()}`),
         api.get<ExchangeRateData>(`/exchange-rate${chatIdQuery()}`).catch(() => null),
+        pageNum === 1
+          ? api.get<Order[] | { items: Order[] }>(`/orders?${orderParams.toString()}${chatIdQuery()}`).catch(() => null)
+          : Promise.resolve(null),
       ]);
 
       if (exchangeRateRes) {
         setRateInfo(exchangeRateRes);
+      }
+
+      if (ordersRes) {
+        const all = Array.isArray(ordersRes) ? ordersRes : ordersRes.items || [];
+        setPendingOrders(
+          all
+            .filter((o) => !o.has_invoice && (o.items?.length ?? 0) > 0)
+            .sort((a, b) => b.order_date.localeCompare(a.order_date))
+        );
       }
 
       if (invoicesRes && "items" in invoicesRes) {
@@ -304,6 +328,108 @@ export default function InvoicesPage() {
           </div>
         </Card>
 
+        {/* Status: Sent invoices | Orders whose invoice isn't generated yet */}
+        <div
+          role="tablist"
+          className="grid grid-cols-2 gap-1 p-1 rounded-[var(--radius-md)] bg-[var(--surface-2)] border border-[var(--border)]"
+        >
+          {([
+            { id: "sent", label: "Sent", icon: <Receipt size={13} />, count: totalCount },
+            { id: "pending", label: "Not generated", icon: <Clock size={13} />, count: pendingOrders.length },
+          ] as const).map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={view === t.id}
+              onClick={() => setView(t.id)}
+              className={`flex items-center justify-center gap-1.5 py-1.5 text-xs font-bold rounded-[var(--radius-sm)] transition-all cursor-pointer ${
+                view === t.id
+                  ? t.id === "pending"
+                    ? "bg-[var(--surface)] text-amber-700 dark:text-amber-300 shadow-xs"
+                    : "bg-[var(--surface)] text-[var(--color-primary)] shadow-xs"
+                  : "text-[var(--text-muted)] hover:text-[var(--text)]"
+              }`}
+            >
+              {t.icon} {t.label}
+              <span className={`text-[10px] font-semibold ${
+                t.id === "pending" && t.count > 0 ? "px-1.5 rounded-full bg-amber-500 text-white" : "opacity-70"
+              }`}>
+                {loading ? "…" : t.count}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {view === "pending" ? (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between px-1">
+              <h2 className="text-xs font-bold tracking-tight text-[var(--text-muted)] uppercase">
+                Orders without invoice ({pendingOrders.length})
+              </h2>
+              {isAdmin && pendingOrders.length > 0 && (
+                <span className="text-[10px] text-[var(--text-muted)]">Tap an order to generate</span>
+              )}
+            </div>
+
+            {loading ? (
+              <Card padding="md" className="space-y-2.5 border border-[var(--border)]">
+                <SkeletonRow />
+                <SkeletonRow />
+              </Card>
+            ) : pendingOrders.length === 0 ? (
+              <EmptyState
+                icon={<Receipt size={36} />}
+                title="All invoices generated"
+                description="Every order in this date range already has an invoice."
+              />
+            ) : (
+              <div className="space-y-2 animate-fade-in">
+                {pendingOrders.map((ord) => {
+                  const qty = (ord.items || []).reduce((s, it) => s + (Number(it.qty) || 1), 0);
+                  const people = ord.person_count ?? new Set((ord.items || []).map((it) => it.user_id || it.name)).size;
+                  return (
+                    <Card
+                      key={ord.order_id}
+                      variant="default"
+                      padding="sm"
+                      className={`border border-amber-200 dark:border-amber-900/50 transition-all ${
+                        isAdmin ? "cursor-pointer hover:border-amber-400" : ""
+                      }`}
+                      onClick={isAdmin ? () => setEditingOrder(ord) : undefined}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300">
+                          <Clock size={15} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-xs font-bold truncate text-[var(--text)]">
+                              {ord.chat_title || `Order #${ord.order_id.slice(-6)}`}
+                            </p>
+                            <Badge variant="warning" className="text-[9px] px-1.5 py-0.2 shrink-0 font-bold">
+                              Not generated
+                            </Badge>
+                          </div>
+                          <p className="text-[11px] truncate text-[var(--text-muted)] mt-0.5">
+                            {ord.order_date} · {people} {people === 1 ? "person" : "people"} · {qty} {qty === 1 ? "dish" : "dishes"}
+                            {ord.question ? ` · ${ord.question}` : ""}
+                          </p>
+                        </div>
+                        {isAdmin && (
+                          <span className="shrink-0 flex items-center gap-1 px-2 py-1 text-[10px] font-bold rounded-[var(--radius-sm)] bg-[var(--color-primary)] text-white">
+                            <FilePlus2 size={12} /> Generate
+                          </span>
+                        )}
+                      </div>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : (
+        <>
         {/* 2. Distinct USD ($) and KHR (៛) Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
           {/* Card 1: Total Orders */}
@@ -454,6 +580,8 @@ export default function InvoicesPage() {
             </div>
           )}
         </div>
+        </>
+        )}
       </main>
 
       <InvoiceViewModal
