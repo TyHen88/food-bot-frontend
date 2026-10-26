@@ -69,6 +69,7 @@ interface InvoicePersonDetail {
   paid_at?: string;
   paid_amount?: number;
   payment_id?: string;
+  paid_note?: string;
   is_payer?: boolean;
 }
 
@@ -115,9 +116,13 @@ interface TransactionRow {
   subtitle: string;
   status: string;
   orderDates: string[];
+  /** Set on unmatched transfers so an admin can assign them. */
+  payment?: PaymentRecord;
 }
 
 type Tab = "orders" | "payments";
+type OrderStatusFilter = "all" | "unpaid" | "paid";
+type PaymentStatusFilter = "all" | "matched" | "unmatched";
 
 interface ExchangeRateData {
   available: boolean;
@@ -131,6 +136,7 @@ interface ExchangeRateData {
 }
 
 type QuickFilter = "today" | "week" | "month" | "all" | "custom";
+const SETTLE_NOTE_MAX = 200; // backend MAX_PAID_NOTE
 const PAGE_SIZE = 25;
 
 /** Normalize dish name by stripping numerals, bullets and list prefixes */
@@ -176,6 +182,46 @@ function formatKhr(amount: number): string {
   return `${Math.round(amount).toLocaleString("en-US")}៛`;
 }
 
+/** Status filter chips with counts, shared by the Orders and Payments tabs. */
+function StatusChips<T extends string>({
+  value,
+  onChange,
+  options,
+}: {
+  value: T;
+  onChange: (v: T) => void;
+  options: { id: T; label: string; count: number; tone?: "danger" | "success" }[];
+}) {
+  return (
+    <div className="flex items-center gap-1.5 px-1 overflow-x-auto scrollbar-none">
+      {options.map((o) => {
+        const active = value === o.id;
+        const activeCls =
+          o.tone === "danger"
+            ? "bg-rose-600 text-white border-rose-600"
+            : o.tone === "success"
+            ? "bg-emerald-600 text-white border-emerald-600"
+            : "bg-[var(--color-primary)] text-white border-[var(--color-primary)]";
+        return (
+          <button
+            key={o.id}
+            type="button"
+            onClick={() => onChange(o.id)}
+            aria-pressed={active}
+            className={`px-2.5 py-0.5 text-[11px] font-semibold rounded-full whitespace-nowrap border transition-all cursor-pointer ${
+              active
+                ? `${activeCls} shadow-xs`
+                : "bg-[var(--surface-2)] text-[var(--text-muted)] border-transparent hover:text-[var(--text)]"
+            }`}
+          >
+            {o.label} <span className="opacity-75">({o.count})</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function MemberSpendModal({
   member,
   open,
@@ -193,11 +239,18 @@ export function MemberSpendModal({
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [tab, setTab] = useState<Tab>("orders");
+  const [orderStatus, setOrderStatus] = useState<OrderStatusFilter>("all");
+  const [paymentStatus, setPaymentStatus] = useState<PaymentStatusFilter>("all");
+  // Group-wide transfers nobody was matched to (admin only) — candidates to assign to this member.
+  const [unmatchedPayments, setUnmatchedPayments] = useState<PaymentRecord[]>([]);
+  const [assignTarget, setAssignTarget] = useState<PaymentRecord | null>(null);
+  const [assigning, setAssigning] = useState(false);
   const [rateInfo, setRateInfo] = useState<ExchangeRateData | null>(null);
   const [loading, setLoading] = useState(false);
   const [updatingPaidOrderId, setUpdatingPaidOrderId] = useState<string | null>(null);
   const [bulkUpdating, setBulkUpdating] = useState(false);
   const [confirmBulkSettle, setConfirmBulkSettle] = useState(false);
+  const [settleNote, setSettleNote] = useState("");
   const [confirmSingleOrder, setConfirmSingleOrder] = useState<{
     orderId: string;
     isPaid: boolean;
@@ -268,6 +321,7 @@ export function MemberSpendModal({
       setOrders([]);
       setInvoices([]);
       setPayments([]);
+      setUnmatchedPayments([]);
       return;
     }
 
@@ -277,16 +331,19 @@ export function MemberSpendModal({
     const orderParams = new URLSearchParams();
     const invoiceParams = new URLSearchParams();
     const paymentParams = new URLSearchParams();
+    const unmatchedParams = new URLSearchParams({ status: "UNMATCHED" });
     orderParams.set("user_id", String(member.user_id));
     invoiceParams.set("user_id", String(member.user_id));
     paymentParams.set("user_id", String(member.user_id));
     if (fromDate) {
       invoiceParams.set("from", fromDate);
       paymentParams.set("from", fromDate);
+      unmatchedParams.set("from", fromDate);
     }
     if (toDate) {
       invoiceParams.set("to", toDate);
       paymentParams.set("to", toDate);
+      unmatchedParams.set("to", toDate);
     }
 
     Promise.all([
@@ -296,8 +353,11 @@ export function MemberSpendModal({
       // Members only get their own transactions back; viewing someone
       // else's detail just shows an empty Payments tab.
       api.get<PaymentRecord[]>(`/payments?${paymentParams.toString()}`).catch(() => [] as PaymentRecord[]),
+      isAdmin
+        ? api.get<PaymentRecord[]>(`/payments?${unmatchedParams.toString()}`).catch(() => [] as PaymentRecord[])
+        : Promise.resolve([] as PaymentRecord[]),
     ])
-      .then(([ordersData, invoicesData, exchangeRateData, paymentsData]) => {
+      .then(([ordersData, invoicesData, exchangeRateData, paymentsData, unmatchedData]) => {
         if (cancelled) return;
         const fetchedOrders = Array.isArray(ordersData)
           ? ordersData
@@ -313,6 +373,7 @@ export function MemberSpendModal({
         setOrders(fetchedOrders);
         setInvoices(fetchedInvoices);
         setPayments(Array.isArray(paymentsData) ? paymentsData : []);
+        setUnmatchedPayments(Array.isArray(unmatchedData) ? unmatchedData : []);
         if (exchangeRateData) {
           setRateInfo(exchangeRateData);
         }
@@ -325,7 +386,7 @@ export function MemberSpendModal({
       });
 
     return () => { cancelled = true; };
-  }, [open, member, fromDate, toDate, toast]);
+  }, [open, member, fromDate, toDate, toast, isAdmin]);
 
   useEffect(() => {
     loadData();
@@ -339,6 +400,34 @@ export function MemberSpendModal({
     });
     return map;
   }, [invoices]);
+
+  // This member's share of one order, and whether it's paid. Paid is the
+  // server's verdict only (my_paid / detail.paid already count the invoice's
+  // own payer as paid); isPayerSelf just labels the row.
+  const orderPayment = useCallback((orderId: string) => {
+    const inv = invoiceMapByOrderId.get(orderId);
+    const isPayerSelf = Boolean(
+      (inv?.payer_user_id && isMemberIdentity(inv.payer_user_id, inv.payer_name)) ||
+      Boolean(inv?.is_payer)
+    );
+    const cachedInv = getInvoiceFromCache(orderId) || (inv?.invoice_id ? getInvoiceFromCache(inv.invoice_id) : undefined);
+    let amountUSD = 0;
+    let isPaid = false;
+    if (inv?.my_amount !== undefined && inv.my_amount > 0) {
+      amountUSD = inv.my_amount;
+      isPaid = Boolean(inv.my_paid);
+    } else if (cachedInv?.details) {
+      const mDetail = cachedInv.details.find((d) => isMemberIdentity(d.user_id, d.user_name));
+      if (mDetail) {
+        amountUSD = mDetail.subtotal;
+        isPaid = Boolean(mDetail.paid);
+      }
+    } else if (inv?.my_items?.length) {
+      amountUSD = inv.my_items.reduce((sum, item) => sum + (item.cost || (item.price * (item.qty || 1))), 0);
+      isPaid = Boolean(inv.my_paid);
+    }
+    return { inv, cachedInv, isPayerSelf, amountUSD, isPaid };
+  }, [invoiceMapByOrderId, isMemberIdentity]);
 
   // Filter orders for this member with date bounds
   const memberFilteredOrders = useMemo(() => {
@@ -358,10 +447,32 @@ export function MemberSpendModal({
       .filter((ord) => ord.memberItems.length > 0);
   }, [orders, fromDate, toDate, isMemberItem]);
 
+  // Unpaid / Paid chips only look at invoiced orders; "Pending Invoice"
+  // orders owe nothing yet, so they show under All only.
+  const orderStatusCounts = useMemo(() => {
+    let unpaid = 0;
+    let paid = 0;
+    memberFilteredOrders.forEach((ord) => {
+      if (!ord.has_invoice) return;
+      if (orderPayment(ord.order_id).isPaid) paid += 1;
+      else unpaid += 1;
+    });
+    return { all: memberFilteredOrders.length, unpaid, paid };
+  }, [memberFilteredOrders, orderPayment]);
+
+  const statusFilteredOrders = useMemo(() => {
+    if (orderStatus === "all") return memberFilteredOrders;
+    return memberFilteredOrders.filter((ord) => {
+      if (!ord.has_invoice) return false;
+      const { isPaid } = orderPayment(ord.order_id);
+      return orderStatus === "paid" ? isPaid : !isPaid;
+    });
+  }, [memberFilteredOrders, orderStatus, orderPayment]);
+
   // Pagination state & Infinite Scroll
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  useEffect(() => { setVisibleCount(PAGE_SIZE); }, [fromDate, toDate, quickFilter]);
-  const shownOrders = useMemo(() => memberFilteredOrders.slice(0, visibleCount), [memberFilteredOrders, visibleCount]);
+  useEffect(() => { setVisibleCount(PAGE_SIZE); }, [fromDate, toDate, quickFilter, orderStatus]);
+  const shownOrders = useMemo(() => statusFilteredOrders.slice(0, visibleCount), [statusFilteredOrders, visibleCount]);
 
   const observerTarget = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -369,7 +480,7 @@ export function MemberSpendModal({
     if (!target) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && memberFilteredOrders.length > visibleCount) {
+        if (entries[0].isIntersecting && statusFilteredOrders.length > visibleCount) {
           setVisibleCount((prev) => prev + PAGE_SIZE);
         }
       },
@@ -377,7 +488,7 @@ export function MemberSpendModal({
     );
     observer.observe(target);
     return () => observer.disconnect();
-  }, [memberFilteredOrders.length, visibleCount]);
+  }, [statusFilteredOrders.length, visibleCount]);
 
   // Statistics & Payer breakdown calculation in USD and KHR
   const stats = useMemo(() => {
@@ -406,34 +517,15 @@ export function MemberSpendModal({
     }>();
 
     memberFilteredOrders.forEach((ord) => {
-      const inv = invoiceMapByOrderId.get(ord.order_id);
-      const isPayerSelf = Boolean(
-        (inv?.payer_user_id && isMemberIdentity(inv.payer_user_id, inv.payer_name)) ||
-        Boolean(inv?.is_payer)
-      );
+      const {
+        inv,
+        isPayerSelf,
+        amountUSD: orderMemberAmountUSD,
+        isPaid: orderIsPaid,
+      } = orderPayment(ord.order_id);
       const payerName = isPayerSelf ? "Self (Payer)" : (inv?.payer_name || "Unknown Payer");
 
       const orderRate = inv?.usd_khr_rate && inv.usd_khr_rate > 0 ? inv.usd_khr_rate : activeRate;
-
-      const cachedInv = getInvoiceFromCache(ord.order_id) || (inv?.invoice_id ? getInvoiceFromCache(inv.invoice_id) : undefined);
-      let orderMemberAmountUSD = 0;
-      // Paid is the server's verdict only (my_paid / detail.paid already count
-      // the invoice's own payer as paid). isPayerSelf just labels the row.
-      let orderIsPaid = false;
-
-      if (inv?.my_amount !== undefined && inv.my_amount > 0) {
-        orderMemberAmountUSD = inv.my_amount;
-        orderIsPaid = Boolean(inv.my_paid);
-      } else if (cachedInv?.details) {
-        const mDetail = cachedInv.details.find((d) => isMemberIdentity(d.user_id, d.user_name));
-        if (mDetail) {
-          orderMemberAmountUSD = mDetail.subtotal;
-          orderIsPaid = Boolean(mDetail.paid);
-        }
-      } else if (inv?.my_items?.length) {
-        orderMemberAmountUSD = inv.my_items.reduce((sum, item) => sum + (item.cost || (item.price * (item.qty || 1))), 0);
-        orderIsPaid = Boolean(inv.my_paid);
-      }
 
       const orderMemberAmountKHR = (inv?.my_amount_khr && inv.my_amount_khr > 0)
         ? inv.my_amount_khr
@@ -502,7 +594,7 @@ export function MemberSpendModal({
       rateDisplay: rateInfo?.display || `${activeRate.toLocaleString()} KHR / USD`,
       rateDate: rateInfo?.rate_date || rateInfo?.today,
     };
-  }, [memberFilteredOrders, invoiceMapByOrderId, isMemberIdentity, rateInfo]);
+  }, [memberFilteredOrders, orderPayment, rateInfo]);
 
   const handleToggleSinglePaid = async (orderId: string, currentPaid: boolean) => {
     if (!member) return;
@@ -565,10 +657,12 @@ export function MemberSpendModal({
         user_id: member.user_id,
         user_name: member.name || member.full_name || member.username,
         paid: true,
+        note: settleNote.trim(),
       });
 
       invalidateInvoiceCache();
 
+      setSettleNote("");
       toast(`Settled ${unpaidInvoiceIds.length} ${unpaidInvoiceIds.length === 1 ? "bill" : "bills"} (${rangeLabel})`, "success");
       loadData();
       onUpdated?.();
@@ -611,7 +705,7 @@ export function MemberSpendModal({
           at,
           amountUSD: 0,
           title: "Marked paid by admin",
-          subtitle: "Cash / manual settle",
+          subtitle: d.paid_note || "Cash / manual settle",
           status: "MANUAL",
           orderDates: [],
         };
@@ -621,13 +715,60 @@ export function MemberSpendModal({
       });
     });
 
-    return [...rows, ...manual.values()].sort((a, b) => b.at.localeCompare(a.at));
-  }, [payments, invoices, isMemberIdentity]);
+    // Transfers the bot couldn't tie to anyone (no user_id, so never in the
+    // member's own list). Shown so an admin can assign one to this member.
+    const unmatched: TransactionRow[] = unmatchedPayments.map((p) => ({
+      key: `unmatched-${p.payment_id}`,
+      kind: "bank",
+      at: p.created_at,
+      amountUSD: p.amount_usd || 0,
+      title: p.sender_name || "Unknown sender",
+      subtitle: p.trx_id ? `Trx ${p.trx_id}` : "",
+      status: "UNMATCHED",
+      orderDates: [],
+      payment: p,
+    }));
+
+    return [...rows, ...manual.values(), ...unmatched].sort((a, b) => b.at.localeCompare(a.at));
+  }, [payments, unmatchedPayments, invoices, isMemberIdentity]);
+
+  const paymentStatusCounts = useMemo(() => {
+    const unmatched = transactions.filter((t) => t.status === "UNMATCHED").length;
+    return { all: transactions.length, matched: transactions.length - unmatched, unmatched };
+  }, [transactions]);
+
+  const filteredTransactions = useMemo(() => {
+    if (paymentStatus === "all") return transactions;
+    return transactions.filter((t) =>
+      paymentStatus === "unmatched" ? t.status === "UNMATCHED" : t.status !== "UNMATCHED"
+    );
+  }, [transactions, paymentStatus]);
 
   const transactionsTotalUSD = useMemo(
     () => transactions.reduce((sum, t) => sum + (t.status === "UNMATCHED" ? 0 : t.amountUSD), 0),
     [transactions]
   );
+
+  // Assign an unmatched transfer to this member: the backend records the
+  // user_id and re-runs settlement, paying their oldest unpaid bills FIFO.
+  const handleAssignPayment = async () => {
+    if (!member || !assignTarget) return;
+    setAssigning(true);
+    try {
+      await api.post(`/payments/${encodeURIComponent(assignTarget.payment_id)}/assign`, {
+        user_id: member.user_id,
+      });
+      invalidateInvoiceCache();
+      toast(`Assigned $${(assignTarget.amount_usd || 0).toFixed(2)} to ${displayName}`, "success");
+      setAssignTarget(null);
+      loadData();
+      onUpdated?.();
+    } catch (e: unknown) {
+      toast((e as Error).message, "error");
+    } finally {
+      setAssigning(false);
+    }
+  };
 
   const displayName = member?.name || member?.full_name || `User ${member?.user_id}`;
   const isAdm = member?.role?.toLowerCase() === "admin";
@@ -878,7 +1019,7 @@ export function MemberSpendModal({
         >
           {([
             { id: "orders", label: "Orders (Bills)", icon: <Receipt size={13} />, count: memberFilteredOrders.length },
-            { id: "payments", label: "Payments", icon: <ArrowLeftRight size={13} />, count: transactions.length },
+            { id: "payments", label: "Payments", icon: <ArrowLeftRight size={13} />, count: paymentStatusCounts.matched },
           ] as const).map((t) => (
             <button
               key={t.id}
@@ -972,7 +1113,7 @@ export function MemberSpendModal({
         <div className="space-y-2">
           <div className="flex items-center justify-between px-1">
             <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">
-              Complete Order History ({memberFilteredOrders.length})
+              Complete Order History ({statusFilteredOrders.length})
             </h4>
             {stats.unpaidOrdersCount > 0 && (
               <Badge variant="danger" className="text-[9px] py-0.2 px-1.5 font-bold">
@@ -981,44 +1122,45 @@ export function MemberSpendModal({
             )}
           </div>
 
+          <StatusChips
+            value={orderStatus}
+            onChange={setOrderStatus}
+            options={[
+              { id: "all", label: "All", count: orderStatusCounts.all },
+              { id: "unpaid", label: "Unpaid", count: orderStatusCounts.unpaid, tone: "danger" },
+              { id: "paid", label: "Paid", count: orderStatusCounts.paid, tone: "success" },
+            ]}
+          />
+
           {loading ? (
             <Card padding="sm" className="space-y-2 border border-[var(--border)]">
               <SkeletonRow />
               <SkeletonRow />
             </Card>
-          ) : memberFilteredOrders.length === 0 ? (
+          ) : statusFilteredOrders.length === 0 ? (
             <EmptyState
               icon={<ShoppingBag size={28} />}
-              title="No spend history"
-              description="This member has no recorded food orders matching the selected date range."
+              title={orderStatus === "all" ? "No spend history" : orderStatus === "unpaid" ? "No unpaid bills" : "No paid bills"}
+              description={
+                orderStatus === "all"
+                  ? "This member has no recorded food orders matching the selected date range."
+                  : `No ${orderStatus} bills for this member in the selected date range.`
+              }
             />
           ) : (
             <div className="space-y-2.5">
               {shownOrders.map((ord) => {
-                const inv = invoiceMapByOrderId.get(ord.order_id);
-                const isPayerSelf = Boolean(
-                  (inv?.payer_user_id && isMemberIdentity(inv.payer_user_id, inv.payer_name)) ||
-                  Boolean(inv?.is_payer)
-                );
+                const {
+                  inv,
+                  cachedInv,
+                  isPayerSelf,
+                  amountUSD: orderSubtotal,
+                  isPaid,
+                } = orderPayment(ord.order_id);
                 const payer = inv?.payer_name || "Payer";
-                const cachedInv = getInvoiceFromCache(ord.order_id) || (inv?.invoice_id ? getInvoiceFromCache(inv.invoice_id) : undefined);
-
-                let orderSubtotal = 0;
-                // Server's verdict only — see the same block in `stats` above.
-                let isPaid = false;
-                if (inv?.my_amount !== undefined && inv.my_amount > 0) {
-                  orderSubtotal = inv.my_amount;
-                  isPaid = Boolean(inv.my_paid);
-                } else if (cachedInv?.details) {
-                  const mDetail = cachedInv.details.find((d) => isMemberIdentity(d.user_id, d.user_name));
-                  if (mDetail) {
-                    orderSubtotal = mDetail.subtotal;
-                    isPaid = Boolean(mDetail.paid);
-                  }
-                } else if (inv?.my_items?.length) {
-                  orderSubtotal = inv.my_items.reduce((sum, item) => sum + (item.cost || (item.price * (item.qty || 1))), 0);
-                  isPaid = Boolean(inv.my_paid);
-                }
+                const paidNote = isPaid
+                  ? (inv?.details || []).find((d) => isMemberIdentity(d.user_id, d.user_name) && d.paid_note)?.paid_note
+                  : undefined;
 
                 const orderRate = inv?.usd_khr_rate && inv.usd_khr_rate > 0 ? inv.usd_khr_rate : (rateInfo?.usd_khr || 4047);
                 const orderSubtotalKHR = (inv?.my_amount_khr && inv.my_amount_khr > 0)
@@ -1147,6 +1289,12 @@ export function MemberSpendModal({
                       })}
                     </div>
 
+                    {paidNote && (
+                      <div className="text-[10px] text-[var(--text-muted)] italic px-1">
+                        📝 {paidNote}
+                      </div>
+                    )}
+
                     {orderSubtotal > 0 && (
                       <div className="flex items-center justify-between pt-1 text-xs border-t border-dashed border-[var(--border)]">
                         <span className="text-[10px] text-[var(--text-muted)]">
@@ -1167,7 +1315,7 @@ export function MemberSpendModal({
                 );
               })}
 
-              {memberFilteredOrders.length > visibleCount && (
+              {statusFilteredOrders.length > visibleCount && (
                 <div ref={observerTarget} className="pt-1">
                   <button
                     onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
@@ -1175,7 +1323,7 @@ export function MemberSpendModal({
                     style={{ background: "var(--surface)", color: "var(--text-2)", borderColor: "var(--border)" }}
                   >
                     <ChevronDown size={13} className="animate-bounce" />
-                    Load more ({memberFilteredOrders.length - visibleCount} remaining)
+                    Load more ({statusFilteredOrders.length - visibleCount} remaining)
                   </button>
                 </div>
               )}
@@ -1196,20 +1344,42 @@ export function MemberSpendModal({
               </span>
             </div>
 
+            <StatusChips
+              value={paymentStatus}
+              onChange={setPaymentStatus}
+              options={[
+                { id: "all", label: "All", count: paymentStatusCounts.all },
+                { id: "matched", label: "Matched", count: paymentStatusCounts.matched, tone: "success" },
+                // Unmatched transfers are admin-only data (members only see their own).
+                ...(isAdmin
+                  ? [{ id: "unmatched" as const, label: "Not matched", count: paymentStatusCounts.unmatched, tone: "danger" as const }]
+                  : []),
+              ]}
+            />
+
             {loading ? (
               <Card padding="sm" className="space-y-2 border border-[var(--border)]">
                 <SkeletonRow />
                 <SkeletonRow />
               </Card>
-            ) : transactions.length === 0 ? (
+            ) : filteredTransactions.length === 0 ? (
               <EmptyState
                 icon={<Wallet size={28} />}
-                title="No payments"
-                description="No bank transfers or manual settlements for this member in the selected date range."
+                title={paymentStatus === "unmatched" ? "No unmatched transfers" : "No payments"}
+                description={
+                  paymentStatus === "unmatched"
+                    ? "Every bank transfer in the selected date range is matched to a member."
+                    : "No bank transfers or manual settlements for this member in the selected date range."
+                }
               />
             ) : (
               <div className="space-y-2">
-                {transactions.map((t) => {
+                {paymentStatus !== "matched" && paymentStatusCounts.unmatched > 0 && (
+                  <p className="text-[10px] text-[var(--text-muted)] px-1">
+                    Not matched = transfers the bot couldn&apos;t tie to any member. If one is from {displayName}, tap Assign to settle their oldest unpaid bills with it.
+                  </p>
+                )}
+                {filteredTransactions.map((t) => {
                   const statusVariant =
                     t.status === "UNMATCHED" ? "danger" : t.kind === "manual" ? "admin" : "success";
                   const when = t.at ? new Date(t.at) : null;
@@ -1238,10 +1408,22 @@ export function MemberSpendModal({
                             ${t.amountUSD.toFixed(2)}
                           </div>
                           <Badge variant={statusVariant} className="text-[9px] py-0 px-1.5 font-bold">
-                            {t.status}
+                            {t.status === "UNMATCHED" ? "NOT MATCHED" : t.status}
                           </Badge>
                         </div>
                       </div>
+                      {isAdmin && t.payment && (
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            disabled={assigning}
+                            onClick={() => setAssignTarget(t.payment ?? null)}
+                            className="px-2 py-0.5 text-[10px] font-bold rounded flex items-center gap-1 cursor-pointer bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs disabled:opacity-60"
+                          >
+                            <Check size={10} /> Assign to {displayName}
+                          </button>
+                        </div>
+                      )}
                       {dates.length > 0 && (
                         <div className="text-[10px] text-[var(--text-muted)] pl-9">
                           Settled bills: {dates.map((d) => format(new Date(d + "T00:00:00"), "MMM d")).join(", ")}
@@ -1255,6 +1437,30 @@ export function MemberSpendModal({
           </div>
         )}
       </div>
+
+      {/* Confirmation: Assign an unmatched transfer to this member */}
+      <ConfirmDialog
+        open={!!assignTarget}
+        onClose={() => { if (!assigning) setAssignTarget(null); }}
+        onConfirm={handleAssignPayment}
+        title="Assign Transfer"
+        variant="success"
+        confirmText="Yes, Assign & Settle"
+        loading={assigning}
+        message={
+          <div>
+            <p className="font-semibold text-[var(--text)]">
+              Assign <strong>${(assignTarget?.amount_usd || 0).toFixed(2)}</strong> from{" "}
+              <span className="font-bold">{assignTarget?.sender_name || "Unknown sender"}</span> to{" "}
+              <span className="font-bold">{displayName}</span>?
+            </p>
+            <p className="text-[11px] text-[var(--text-muted)] mt-1">
+              It settles {displayName}&apos;s oldest unpaid bills first
+              {assignTarget?.trx_id ? <> · Trx <span className="font-mono">{assignTarget.trx_id}</span></> : null}.
+            </p>
+          </div>
+        }
+      />
 
       {/* Confirmation: Bulk Settle All for this Member */}
       <ConfirmDialog
@@ -1283,6 +1489,22 @@ export function MemberSpendModal({
             <p className="text-[11px] text-[var(--text-muted)] mt-1">
               Total to settle: <strong className="text-[var(--text)]">${rangeUnpaid.dueUSD.toFixed(2)} ({formatKhr(rangeUnpaid.dueKHR)})</strong>.
             </p>
+            <label className="block text-left mt-3">
+              <span className="block text-[10px] font-bold text-[var(--text-muted)] uppercase mb-0.5">
+                Note (optional)
+              </span>
+              <textarea
+                value={settleNote}
+                onChange={(e) => setSettleNote(e.target.value)}
+                maxLength={SETTLE_NOTE_MAX}
+                rows={2}
+                placeholder="e.g. Paid cash to Tii, ABA transfer from wife's account…"
+                className="w-full px-2.5 py-1.5 text-xs rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] focus:outline-none focus:border-[var(--color-primary)] resize-none"
+              />
+              <span className="block text-right text-[9px] text-[var(--text-muted)]">
+                {settleNote.length}/{SETTLE_NOTE_MAX}
+              </span>
+            </label>
           </div>
         }
       />
