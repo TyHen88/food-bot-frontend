@@ -19,7 +19,9 @@ import {
   Loader2,
   DollarSign,
   Landmark,
-  AlertCircle
+  AlertCircle,
+  Receipt,
+  ArrowLeftRight
 } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
@@ -66,6 +68,8 @@ interface InvoicePersonDetail {
   paid?: boolean;
   paid_at?: string;
   paid_amount?: number;
+  payment_id?: string;
+  is_payer?: boolean;
 }
 
 interface InvoiceRow {
@@ -81,9 +85,39 @@ interface InvoiceRow {
   my_amount?: number;
   my_paid?: boolean;
   my_amount_khr?: number | null;
+  my_due?: number;
+  my_due_khr?: number;
   usd_khr_rate?: number;
   my_items?: InvoiceDetailItem[];
+  details?: InvoicePersonDetail[];
 }
+
+interface PaymentRecord {
+  payment_id: string;
+  trx_id: string;
+  user_id: string;
+  sender_name: string;
+  amount: number;
+  currency: string;
+  amount_usd: number;
+  settled_orders: { order_id: string; date?: string; amount?: number }[];
+  status: string;
+  created_at: string;
+}
+
+/** One row of the Payments tab: a bank transaction, or an admin's manual settle. */
+interface TransactionRow {
+  key: string;
+  kind: "bank" | "manual";
+  at: string;
+  amountUSD: number;
+  title: string;
+  subtitle: string;
+  status: string;
+  orderDates: string[];
+}
+
+type Tab = "orders" | "payments";
 
 interface ExchangeRateData {
   available: boolean;
@@ -157,6 +191,8 @@ export function MemberSpendModal({
   const { toast } = useToast();
   const [orders, setOrders] = useState<Order[]>([]);
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
+  const [payments, setPayments] = useState<PaymentRecord[]>([]);
+  const [tab, setTab] = useState<Tab>("orders");
   const [rateInfo, setRateInfo] = useState<ExchangeRateData | null>(null);
   const [loading, setLoading] = useState(false);
   const [updatingPaidOrderId, setUpdatingPaidOrderId] = useState<string | null>(null);
@@ -231,6 +267,7 @@ export function MemberSpendModal({
     if (!open || !member) {
       setOrders([]);
       setInvoices([]);
+      setPayments([]);
       return;
     }
 
@@ -239,17 +276,28 @@ export function MemberSpendModal({
 
     const orderParams = new URLSearchParams();
     const invoiceParams = new URLSearchParams();
+    const paymentParams = new URLSearchParams();
     orderParams.set("user_id", String(member.user_id));
     invoiceParams.set("user_id", String(member.user_id));
-    if (fromDate) invoiceParams.set("from", fromDate);
-    if (toDate) invoiceParams.set("to", toDate);
+    paymentParams.set("user_id", String(member.user_id));
+    if (fromDate) {
+      invoiceParams.set("from", fromDate);
+      paymentParams.set("from", fromDate);
+    }
+    if (toDate) {
+      invoiceParams.set("to", toDate);
+      paymentParams.set("to", toDate);
+    }
 
     Promise.all([
       api.get<Order[] | { items: Order[] }>(`/orders?${orderParams.toString()}${chatIdQuery()}`),
       api.get<InvoiceRow[] | { items: InvoiceRow[] }>(`/invoices?${invoiceParams.toString()}${chatIdQuery()}`),
       api.get<ExchangeRateData>(`/exchange-rate${chatIdQuery()}`).catch(() => null),
+      // Members only get their own transactions back; viewing someone
+      // else's detail just shows an empty Payments tab.
+      api.get<PaymentRecord[]>(`/payments?${paymentParams.toString()}`).catch(() => [] as PaymentRecord[]),
     ])
-      .then(([ordersData, invoicesData, exchangeRateData]) => {
+      .then(([ordersData, invoicesData, exchangeRateData, paymentsData]) => {
         if (cancelled) return;
         const fetchedOrders = Array.isArray(ordersData)
           ? ordersData
@@ -264,6 +312,7 @@ export function MemberSpendModal({
 
         setOrders(fetchedOrders);
         setInvoices(fetchedInvoices);
+        setPayments(Array.isArray(paymentsData) ? paymentsData : []);
         if (exchangeRateData) {
           setRateInfo(exchangeRateData);
         }
@@ -480,22 +529,29 @@ export function MemberSpendModal({
     }
   };
 
+  // Unpaid bills inside the selected From → To range. /invoices is already
+  // range-filtered server-side, so settling exactly these is "what you see".
+  // Already-paid ones are skipped, or their real PayWay payment record would
+  // be overwritten with an ADMIN_ settle.
+  const rangeUnpaid = useMemo(() => {
+    const list = invoices
+      .filter((inv) => (inv.my_amount ?? 0) > 0 && !inv.my_paid && !inv.is_payer)
+      .sort((a, b) => a.order_date.localeCompare(b.order_date));
+    const dueUSD = list.reduce((sum, inv) => sum + (inv.my_due ?? inv.my_amount ?? 0), 0);
+    const dueKHR = list.reduce((sum, inv) => sum + (inv.my_due_khr ?? inv.my_amount_khr ?? 0), 0);
+    return { list, dueUSD, dueKHR };
+  }, [invoices]);
+
+  const rangeLabel = useMemo(() => {
+    const fmt = (d: string) => format(new Date(d + "T00:00:00"), "MMM d, yyyy");
+    if (!fromDate && !toDate) return "All time";
+    if (fromDate && toDate) return fromDate === toDate ? fmt(fromDate) : `${fmt(fromDate)} → ${fmt(toDate)}`;
+    return fromDate ? `From ${fmt(fromDate)}` : `Up to ${fmt(toDate)}`;
+  }, [fromDate, toDate]);
+
   const handleBulkMarkPaid = async () => {
     if (!member) return;
-    const unpaidInvoiceIds: string[] = [];
-    memberFilteredOrders.forEach((ord) => {
-      if (!ord.has_invoice) return;
-      const inv = invoiceMapByOrderId.get(ord.order_id);
-      const isPayerSelf = Boolean(
-        (inv?.payer_user_id && isMemberIdentity(inv.payer_user_id, inv.payer_name)) ||
-        Boolean(inv?.is_payer)
-      );
-      if (isPayerSelf) return;
-      // Skip invoices already paid, or their real PayWay payment record gets
-      // overwritten with an ADMIN_ settle.
-      if (inv?.my_paid) return;
-      unpaidInvoiceIds.push(inv?.invoice_id || ord.order_id);
-    });
+    const unpaidInvoiceIds = rangeUnpaid.list.map((inv) => inv.invoice_id || inv.order_id);
 
     if (unpaidInvoiceIds.length === 0) {
       toast("No unpaid invoices to settle", "info");
@@ -513,7 +569,7 @@ export function MemberSpendModal({
 
       invalidateInvoiceCache();
 
-      toast(`Successfully settled ${unpaidInvoiceIds.length} orders!`, "success");
+      toast(`Settled ${unpaidInvoiceIds.length} ${unpaidInvoiceIds.length === 1 ? "bill" : "bills"} (${rangeLabel})`, "success");
       loadData();
       onUpdated?.();
     } catch (e: unknown) {
@@ -522,6 +578,56 @@ export function MemberSpendModal({
       setBulkUpdating(false);
     }
   };
+
+  // Payments tab: bank transfers matched to this member, plus admin manual
+  // settles (those leave no payment row, only ADMIN_<id> on the bill).
+  const transactions = useMemo(() => {
+    const rows: TransactionRow[] = payments.map((p) => ({
+      key: `bank-${p.payment_id}`,
+      kind: "bank",
+      at: p.created_at,
+      amountUSD: p.amount_usd || 0,
+      title: p.sender_name || "Bank transfer",
+      subtitle: [
+        p.currency && p.currency !== "USD" ? `${p.amount.toLocaleString()} ${p.currency}` : "",
+        p.trx_id ? `Trx ${p.trx_id}` : "",
+      ].filter(Boolean).join(" · "),
+      status: p.status || "MATCHED",
+      orderDates: (p.settled_orders || []).map((o) => o.date || "").filter(Boolean),
+    }));
+
+    // Group a member's admin-settled bills by settle time: one "Mark All as
+    // Paid" click becomes one transaction, not one row per bill.
+    const manual = new Map<string, TransactionRow>();
+    invoices.forEach((inv) => {
+      (inv.details || []).forEach((d) => {
+        if (!isMemberIdentity(d.user_id, d.user_name) || !d.paid || d.is_payer) return;
+        if (!String(d.payment_id || "").startsWith("ADMIN_")) return;
+        const at = d.paid_at || "";
+        const groupKey = `manual-${at.slice(0, 16)}-${d.payment_id}`;
+        const row = manual.get(groupKey) || {
+          key: groupKey,
+          kind: "manual" as const,
+          at,
+          amountUSD: 0,
+          title: "Marked paid by admin",
+          subtitle: "Cash / manual settle",
+          status: "MANUAL",
+          orderDates: [],
+        };
+        row.amountUSD += d.paid_amount || d.subtotal || 0;
+        row.orderDates.push(inv.order_date);
+        manual.set(groupKey, row);
+      });
+    });
+
+    return [...rows, ...manual.values()].sort((a, b) => b.at.localeCompare(a.at));
+  }, [payments, invoices, isMemberIdentity]);
+
+  const transactionsTotalUSD = useMemo(
+    () => transactions.reduce((sum, t) => sum + (t.status === "UNMATCHED" ? 0 : t.amountUSD), 0),
+    [transactions]
+  );
 
   const displayName = member?.name || member?.full_name || `User ${member?.user_id}`;
   const isAdm = member?.role?.toLowerCase() === "admin";
@@ -765,6 +871,35 @@ export function MemberSpendModal({
           </Card>
         </div>
 
+        {/* Tabs: Orders (bills) | Payments (transactions) */}
+        <div
+          role="tablist"
+          className="grid grid-cols-2 gap-1 p-1 rounded-[var(--radius-md)] bg-[var(--surface-2)] border border-[var(--border)]"
+        >
+          {([
+            { id: "orders", label: "Orders (Bills)", icon: <Receipt size={13} />, count: memberFilteredOrders.length },
+            { id: "payments", label: "Payments", icon: <ArrowLeftRight size={13} />, count: transactions.length },
+          ] as const).map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === t.id}
+              onClick={() => setTab(t.id)}
+              className={`flex items-center justify-center gap-1.5 py-1.5 text-xs font-bold rounded-[var(--radius-sm)] transition-all cursor-pointer ${
+                tab === t.id
+                  ? "bg-[var(--surface)] text-[var(--color-primary)] shadow-xs"
+                  : "text-[var(--text-muted)] hover:text-[var(--text)]"
+              }`}
+            >
+              {t.icon} {t.label}
+              <span className="text-[10px] font-semibold opacity-70">({t.count})</span>
+            </button>
+          ))}
+        </div>
+
+        {tab === "orders" && (
+        <>
         {/* Payer Breakdown Card */}
         <Card variant="default" padding="sm" className="space-y-1.5 border border-[var(--border)]">
           <div className="flex items-center justify-between border-b border-[var(--border)] pb-1">
@@ -805,15 +940,15 @@ export function MemberSpendModal({
           </div>
         </Card>
 
-        {/* Admin Bulk Mark Paid Banner */}
-        {isAdmin && stats.totalUnpaidUSD > 0.009 && (
+        {/* Admin: settle every unpaid bill in the From → To range above */}
+        {isAdmin && rangeUnpaid.list.length > 0 && (
           <div className="flex items-center justify-between p-2.5 rounded-[var(--radius-md)] bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 shadow-xs gap-2">
-            <div className="text-xs">
+            <div className="text-xs min-w-0">
               <span className="font-bold text-amber-900 dark:text-amber-200 block text-xs">
-                ⚡ Unpaid Balance: ${stats.totalUnpaidUSD.toFixed(2)} ({formatKhr(stats.totalUnpaidKHR)})
+                ⚡ Unpaid {rangeLabel}: ${rangeUnpaid.dueUSD.toFixed(2)} ({formatKhr(rangeUnpaid.dueKHR)})
               </span>
               <span className="text-[10px] text-amber-700 dark:text-amber-400">
-                Settle all {stats.unpaidOrdersCount} unpaid orders for this member in one click.
+                Settles {rangeUnpaid.list.length} unpaid {rangeUnpaid.list.length === 1 ? "bill" : "bills"} in this date range. Change From / To above to settle a different period.
               </span>
             </div>
             <Button
@@ -828,7 +963,7 @@ export function MemberSpendModal({
               ) : (
                 <Zap size={12} className="mr-1" />
               )}
-              Mark All as Paid
+              Settle Range
             </Button>
           </div>
         )}
@@ -1047,6 +1182,78 @@ export function MemberSpendModal({
             </div>
           )}
         </div>
+        </>
+        )}
+
+        {tab === "payments" && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between px-1">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                Transactions · {rangeLabel}
+              </h4>
+              <span className="text-xs font-extrabold text-emerald-700 dark:text-emerald-300">
+                ${transactionsTotalUSD.toFixed(2)} received
+              </span>
+            </div>
+
+            {loading ? (
+              <Card padding="sm" className="space-y-2 border border-[var(--border)]">
+                <SkeletonRow />
+                <SkeletonRow />
+              </Card>
+            ) : transactions.length === 0 ? (
+              <EmptyState
+                icon={<Wallet size={28} />}
+                title="No payments"
+                description="No bank transfers or manual settlements for this member in the selected date range."
+              />
+            ) : (
+              <div className="space-y-2">
+                {transactions.map((t) => {
+                  const statusVariant =
+                    t.status === "UNMATCHED" ? "danger" : t.kind === "manual" ? "admin" : "success";
+                  const when = t.at ? new Date(t.at) : null;
+                  const dates = [...new Set(t.orderDates)].sort();
+                  return (
+                    <Card key={t.key} variant="flat" padding="sm" className="border border-[var(--border)] space-y-1">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-start gap-2 min-w-0">
+                          <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${
+                            t.kind === "bank"
+                              ? "bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300"
+                              : "bg-[var(--surface-2)] text-[var(--text-muted)]"
+                          }`}>
+                            {t.kind === "bank" ? <Landmark size={13} /> : <User size={13} />}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold text-[var(--text)] truncate">{t.title}</div>
+                            <div className="text-[10px] text-[var(--text-muted)] truncate">
+                              {when && !isNaN(when.getTime()) ? format(when, "MMM d, yyyy · HH:mm") : "—"}
+                              {t.subtitle ? ` · ${t.subtitle}` : ""}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right whitespace-nowrap">
+                          <div className="text-xs font-extrabold text-[var(--color-primary)]">
+                            ${t.amountUSD.toFixed(2)}
+                          </div>
+                          <Badge variant={statusVariant} className="text-[9px] py-0 px-1.5 font-bold">
+                            {t.status}
+                          </Badge>
+                        </div>
+                      </div>
+                      {dates.length > 0 && (
+                        <div className="text-[10px] text-[var(--text-muted)] pl-9">
+                          Settled bills: {dates.map((d) => format(new Date(d + "T00:00:00"), "MMM d")).join(", ")}
+                        </div>
+                      )}
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Confirmation: Bulk Settle All for this Member */}
@@ -1057,17 +1264,24 @@ export function MemberSpendModal({
           setConfirmBulkSettle(false);
           handleBulkMarkPaid();
         }}
-        title="Confirm Mark All as Paid"
+        title="Confirm Settle Range"
         variant="success"
-        confirmText="Yes, Mark All as Paid"
+        confirmText="Yes, Mark as Paid"
         message={
           <div>
             <p className="font-semibold text-[var(--text)]">
-              Mark all unpaid orders as <span className="text-emerald-600 dark:text-emerald-400 font-bold">PAID</span> for{" "}
+              Mark {rangeUnpaid.list.length} unpaid {rangeUnpaid.list.length === 1 ? "bill" : "bills"} as{" "}
+              <span className="text-emerald-600 dark:text-emerald-400 font-bold">PAID</span> for{" "}
               <span className="font-bold">{displayName}</span>?
             </p>
             <p className="text-[11px] text-[var(--text-muted)] mt-1">
-              Total unpaid balance to settle: <strong className="text-[var(--text)]">${stats.totalUnpaidUSD.toFixed(2)} ({formatKhr(stats.totalUnpaidKHR)})</strong>.
+              Range: <strong className="text-[var(--text)]">{rangeLabel}</strong>
+              {rangeUnpaid.list.length > 0 && (
+                <> ({rangeUnpaid.list.map((inv) => format(new Date(inv.order_date + "T00:00:00"), "MMM d")).join(", ")})</>
+              )}
+            </p>
+            <p className="text-[11px] text-[var(--text-muted)] mt-1">
+              Total to settle: <strong className="text-[var(--text)]">${rangeUnpaid.dueUSD.toFixed(2)} ({formatKhr(rangeUnpaid.dueKHR)})</strong>.
             </p>
           </div>
         }
