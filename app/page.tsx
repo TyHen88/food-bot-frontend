@@ -146,7 +146,12 @@ export default function DashboardPage() {
       const to   = format(endOfMonth(m),   "yyyy-MM-dd");
       const [ordersRes, invoicesRes, rateRes] = await Promise.all([
         api.get<Order[] | { items: Order[] }>(`/orders?from=${from}&to=${to}${chatIdQuery()}`).catch(() => []),
-        api.get<InvoiceRow[] | { items: InvoiceRow[] }>(`/invoices?from=${from}&to=${to}${chatIdQuery()}`).catch(() => []),
+        api.get<InvoiceRow[] | { items: InvoiceRow[] }>(`/invoices?from=${from}&to=${to}${chatIdQuery()}`).catch((e: unknown) => {
+          // Without invoices no day can be confirmed paid — say so rather than
+          // silently rendering every ordered day as settled.
+          toast(`Couldn't load payment status: ${(e as Error).message}`, "error");
+          return [];
+        }),
         api.get<{ usd_khr?: number; display?: string }>(`/exchange-rate${chatIdQuery()}`).catch(() => null),
       ]);
 
@@ -325,9 +330,18 @@ export default function DashboardPage() {
       const paidAmt = (inv.paid_members || []).reduce((s, m) => s + (m.amount || 0), 0);
       map[key].totalPaid += paidAmt;
       if (unpaidDue > 0.009) {
-        map[key].allPaid = false;
         map[key].hasUnpaid = true;
       }
+    }
+
+    // "Paid" must be proven, not assumed: the day needs invoices, every order
+    // on it must be invoiced, and nobody may still owe anything.
+    const invoicedIds = new Set(invoices.map((inv) => String(inv.order_id || inv.invoice_id)));
+    for (const info of Object.values(map)) {
+      info.allPaid =
+        info.invoices.length > 0 &&
+        !info.hasUnpaid &&
+        info.orders.every((o) => invoicedIds.has(String(o.order_id)));
     }
 
     return map;
@@ -339,7 +353,7 @@ export default function DashboardPage() {
   const monthTotalSpend = invoices.reduce((s, inv) => s + (inv.total || 0), 0);
   const monthTotalDue = invoices.reduce((s, inv) => s + ((inv.unpaid_members || []).reduce((a, b) => a + (b.due || 0), 0)), 0);
   const monthTotalPaid = Math.max(0, monthTotalSpend - monthTotalDue);
-  const monthPaidPercent = monthTotalSpend > 0 ? Math.round((monthTotalPaid / monthTotalSpend) * 100) : 100;
+  const monthPaidPercent = monthTotalSpend > 0 ? Math.round((monthTotalPaid / monthTotalSpend) * 100) : 0;
 
   // Calendar dates
   const days = eachDayOfInterval({ start: startOfMonth(month), end: endOfMonth(month) });
@@ -827,7 +841,11 @@ export default function DashboardPage() {
             open={!!viewInvoiceId}
             onClose={() => setViewInvoiceId(null)}
             isAdmin={isAdmin}
-            onResent={() => toast("Invoice resent successfully", "success")}
+            onResent={() => {
+              // Also fires after Mark/Unmark paid — refresh calendar + day summary.
+              loadMonth(month);
+              if (selectedDay) handleSelectDay(selectedDay);
+            }}
           />
         )}
 

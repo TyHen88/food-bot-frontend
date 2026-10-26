@@ -59,10 +59,7 @@ export const InvoicePdfDocument = forwardRef<HTMLDivElement, { invoice: Invoice 
 
         {/* Per-person breakdown — bordered like the modal's divide-y list */}
         {invoice.details.map((d, i) => {
-          const isPayerSelf = Boolean(
-            (invoice.payer_user_id && d.user_id && String(invoice.payer_user_id).trim() === String(d.user_id).trim()) ||
-            (invoice.payer_name && d.user_name && invoice.payer_name.trim().toLowerCase() === d.user_name.trim().toLowerCase())
-          );
+          const isPayerSelf = Boolean(d.is_payer);
 
           return (
             <div
@@ -111,10 +108,7 @@ export const InvoicePdfDocument = forwardRef<HTMLDivElement, { invoice: Invoice 
         {(() => {
           const restaurantTotal = invoice.details.reduce((sum, d) => sum + (d.subtotal || 0), 0);
           const payerSelfAmount = invoice.details
-            .filter((d) =>
-              (invoice.payer_user_id && d.user_id && String(invoice.payer_user_id).trim() === String(d.user_id).trim()) ||
-              (invoice.payer_name && d.user_name && invoice.payer_name.trim().toLowerCase() === d.user_name.trim().toLowerCase())
-            )
+            .filter((d) => d.is_payer)
             .reduce((sum, d) => sum + (d.subtotal || 0), 0);
 
           const totalDueToPayer = payerSelfAmount > 0 

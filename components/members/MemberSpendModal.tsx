@@ -368,20 +368,22 @@ export function MemberSpendModal({
 
       const cachedInv = getInvoiceFromCache(ord.order_id) || (inv?.invoice_id ? getInvoiceFromCache(inv.invoice_id) : undefined);
       let orderMemberAmountUSD = 0;
-      let orderIsPaid = isPayerSelf;
+      // Paid is the server's verdict only (my_paid / detail.paid already count
+      // the invoice's own payer as paid). isPayerSelf just labels the row.
+      let orderIsPaid = false;
 
       if (inv?.my_amount !== undefined && inv.my_amount > 0) {
         orderMemberAmountUSD = inv.my_amount;
-        if (!isPayerSelf) orderIsPaid = Boolean(inv.my_paid);
+        orderIsPaid = Boolean(inv.my_paid);
       } else if (cachedInv?.details) {
         const mDetail = cachedInv.details.find((d) => isMemberIdentity(d.user_id, d.user_name));
         if (mDetail) {
           orderMemberAmountUSD = mDetail.subtotal;
-          if (!isPayerSelf) orderIsPaid = Boolean(mDetail.paid);
+          orderIsPaid = Boolean(mDetail.paid);
         }
       } else if (inv?.my_items?.length) {
         orderMemberAmountUSD = inv.my_items.reduce((sum, item) => sum + (item.cost || (item.price * (item.qty || 1))), 0);
-        if (!isPayerSelf) orderIsPaid = Boolean(inv.my_paid);
+        orderIsPaid = Boolean(inv.my_paid);
       }
 
       const orderMemberAmountKHR = (inv?.my_amount_khr && inv.my_amount_khr > 0)
@@ -489,6 +491,9 @@ export function MemberSpendModal({
         Boolean(inv?.is_payer)
       );
       if (isPayerSelf) return;
+      // Skip invoices already paid, or their real PayWay payment record gets
+      // overwritten with an ADMIN_ settle.
+      if (inv?.my_paid) return;
       unpaidInvoiceIds.push(inv?.invoice_id || ord.order_id);
     });
 
@@ -864,19 +869,20 @@ export function MemberSpendModal({
                 const cachedInv = getInvoiceFromCache(ord.order_id) || (inv?.invoice_id ? getInvoiceFromCache(inv.invoice_id) : undefined);
 
                 let orderSubtotal = 0;
-                let isPaid = isPayerSelf;
+                // Server's verdict only — see the same block in `stats` above.
+                let isPaid = false;
                 if (inv?.my_amount !== undefined && inv.my_amount > 0) {
                   orderSubtotal = inv.my_amount;
-                  if (!isPayerSelf) isPaid = Boolean(inv.my_paid);
+                  isPaid = Boolean(inv.my_paid);
                 } else if (cachedInv?.details) {
                   const mDetail = cachedInv.details.find((d) => isMemberIdentity(d.user_id, d.user_name));
                   if (mDetail) {
                     orderSubtotal = mDetail.subtotal;
-                    if (!isPayerSelf) isPaid = Boolean(mDetail.paid);
+                    isPaid = Boolean(mDetail.paid);
                   }
                 } else if (inv?.my_items?.length) {
                   orderSubtotal = inv.my_items.reduce((sum, item) => sum + (item.cost || (item.price * (item.qty || 1))), 0);
-                  if (!isPayerSelf) isPaid = Boolean(inv.my_paid);
+                  isPaid = Boolean(inv.my_paid);
                 }
 
                 const orderRate = inv?.usd_khr_rate && inv.usd_khr_rate > 0 ? inv.usd_khr_rate : (rateInfo?.usd_khr || 4047);
@@ -903,7 +909,7 @@ export function MemberSpendModal({
                         </Badge>
                         {ord.has_invoice ? (
                           <>
-                            {isPayerSelf ? (
+                            {isPayerSelf && isPaid ? (
                               <Badge variant="success" className="text-[9px] py-0 px-1.5 font-bold">
                                 ✓ Paid (Payer)
                               </Badge>

@@ -937,9 +937,15 @@ export default function MyOrdersPage() {
                             <Badge variant="danger" className="text-[9px] py-0 px-1.5 font-bold">
                               Owes {payer ? `${payer}` : "Lunch"}{isPartlyPaid ? ` · $${dueUSD.toFixed(2)} left` : ""}
                             </Badge>
-                          ) : (
+                          ) : inv.my_paid ? (
                             <Badge variant="success" className="text-[9px] py-0 px-1.5 font-bold">
                               ✓ Paid
+                            </Badge>
+                          ) : (
+                            // Nothing owed but the server never confirmed paid: it didn't
+                            // match this dish to me on the invoice. Don't claim "Paid".
+                            <Badge variant="default" className="text-[9px] py-0 px-1.5">
+                              Not on invoice
                             </Badge>
                           )
                         ) : (

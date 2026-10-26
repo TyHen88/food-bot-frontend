@@ -73,14 +73,9 @@ export function InvoiceViewModal({
         user_name: d.user_name,
         paid: newPaid,
       });
-      const updatedInvoice: Invoice = {
-        ...invoice,
-        details: invoice.details.map((item, i) =>
-          i === index ? { ...item, paid: newPaid, paid_amount: newPaid ? item.subtotal : 0 } : item
-        ),
-      };
-      setInvoice(updatedInvoice);
-      setInvoiceInCache(updatedInvoice);
+      // Re-read what the server actually stored instead of patching locally,
+      // so the badge (and the 5-min cache other screens read) can't drift.
+      setInvoice(await fetchInvoiceWithCache(invoice.invoice_id, true));
       toast(newPaid ? `Marked ${d.user_name} as Paid` : `Unmarked ${d.user_name}`, "success");
       onResent?.();
     } catch (e: unknown) {
@@ -190,11 +185,10 @@ export function InvoiceViewModal({
           <div className="divide-y rounded-[var(--radius-md)] border overflow-hidden"
             style={{ borderColor: "var(--border)" }}>
             {invoice.details.map((d, i) => {
-              const isPayerSelf = Boolean(
-                (invoice.payer_user_id && d.user_id && String(invoice.payer_user_id).trim() === String(d.user_id).trim()) ||
-                (invoice.payer_name && d.user_name && invoice.payer_name.trim().toLowerCase() === d.user_name.trim().toLowerCase())
-              );
-              const isPaid = d.paid || isPayerSelf;
+              // Both flags are computed by the server (same rule as every other
+              // screen); matching names here made a namesake "Paid (Payer)".
+              const isPayerSelf = Boolean(d.is_payer);
+              const isPaid = Boolean(d.paid) || isPayerSelf;
 
               return (
                 <div key={i} className="px-3 py-2" style={{ background: "var(--surface)" }}>
@@ -270,10 +264,7 @@ export function InvoiceViewModal({
           {(() => {
             const restaurantTotal = invoice.details.reduce((sum, d) => sum + (d.subtotal || 0), 0);
             const payerSelfAmount = invoice.details
-              .filter((d) =>
-                (invoice.payer_user_id && d.user_id && String(invoice.payer_user_id).trim() === String(d.user_id).trim()) ||
-                (invoice.payer_name && d.user_name && invoice.payer_name.trim().toLowerCase() === d.user_name.trim().toLowerCase())
-              )
+              .filter((d) => d.is_payer)
               .reduce((sum, d) => sum + (d.subtotal || 0), 0);
 
             const totalDueToPayer = payerSelfAmount > 0 

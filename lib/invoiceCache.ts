@@ -12,9 +12,13 @@ export interface InvoiceDetailEntry {
   user_name: string;
   items: InvoiceItem[];
   subtotal: number;
+  // Server-computed (GET /invoices/{id}): `paid` already discounts old
+  // auto-paid flags and stale payer marks, `is_payer` is THIS invoice's payer.
   paid?: boolean;
   paid_at?: string;
   paid_amount?: number;
+  due?: number;
+  is_payer?: boolean;
 }
 
 export interface Invoice {
